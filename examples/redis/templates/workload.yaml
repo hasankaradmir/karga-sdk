@@ -1,0 +1,34 @@
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata:
+  name: redis
+spec:
+  image: {{ include "redis.image" . | quote }}
+  restartPolicy: {{ .Values.workload.restartPolicy }}
+  command:
+    - redis-server
+    - /usr/local/etc/redis/redis.conf
+  {{- if .Values.network.enabled }}
+  networks:
+    - redis-network
+  ports:
+    - containerPort: 6379
+      hostPort: {{ .Values.network.port }}
+  {{- end }}
+  mounts:
+    - config: redis-config
+      mountPath: /usr/local/etc/redis
+    {{- if .Values.storage.enabled }}
+    - volume: redis-data
+      mountPath: /data
+    {{- end }}
+  healthCheck:
+    type: exec
+    command: [redis-cli, ping]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+  {{- with .Values.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

@@ -1,0 +1,8 @@
+apiVersion: karga.io/v1alpha1
+kind: Config
+metadata:
+  name: redis-config
+spec:
+  files:
+    redis.conf: |
+      {{- tpl (.Files.Get "redis.conf") . | nindent 6 }}

@@ -1,0 +1,6 @@
+{{- if .Values.network.enabled }}
+apiVersion: karga.io/v1alpha1
+kind: Network
+metadata:
+  name: postgres-network
+{{- end }}

@@ -1,0 +1,20 @@
+image:
+  repository: postgres
+  tag: "17"
+
+database:
+  name: app
+  user: app
+  # Required. Pass it with --set database.password=... or a values file kept out of git.
+  password: ""
+
+network:
+  enabled: true
+  port: 5432
+
+storage:
+  enabled: true
+
+resources:
+  memory: 1Gi
+  cpu: 1

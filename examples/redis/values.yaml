@@ -1,0 +1,23 @@
+image:
+  repository: redis
+  tag: "7.4"
+
+workload:
+  # always | on-failure | unless-stopped | never
+  restartPolicy: always
+
+network:
+  enabled: true
+  # Host port Redis is published on.
+  port: 6379
+
+storage:
+  enabled: true
+
+config:
+  maxmemory: 256mb
+  maxmemoryPolicy: allkeys-lru
+
+resources:
+  memory: 512Mi
+  cpu: 1

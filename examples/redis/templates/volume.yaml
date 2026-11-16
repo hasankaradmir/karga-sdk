@@ -1,0 +1,9 @@
+{{- if .Values.storage.enabled }}
+apiVersion: karga.io/v1alpha1
+kind: Volume
+metadata:
+  name: redis-data
+spec:
+  driver: local
+  retention: retain
+{{- end }}
