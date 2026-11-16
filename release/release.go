@@ -68,9 +68,11 @@ type Revision struct {
 	Number         int    `json:"revision"`
 	PackageName    string `json:"package"`
 	PackageVersion string `json:"version"`
-	PackageDigest  string `json:"packageDigest"`
-	ValuesDigest   string `json:"valuesDigest"`
-	ManifestDigest string `json:"manifestDigest"`
+	// RuntimeSupported is the package's runtime.supported, needed to re-check a rollback.
+	RuntimeSupported []string `json:"-"`
+	PackageDigest    string   `json:"packageDigest"`
+	ValuesDigest     string   `json:"valuesDigest"`
+	ManifestDigest   string   `json:"manifestDigest"`
 	// Values are the user overrides (-f, --set); ValuesAll is the merged result used to render.
 	Values    map[string]any `json:"-"`
 	ValuesAll map[string]any `json:"-"`
