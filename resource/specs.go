@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"strings"
 	"time"
@@ -11,12 +12,14 @@ import (
 
 // WorkloadSpec runs one container (tech design §6.1). Replicas are intentionally unsupported.
 type WorkloadSpec struct {
-	Image         string            `json:"image"`
-	RestartPolicy string            `json:"restartPolicy,omitempty"`
-	Command       []string          `json:"command,omitempty"`
-	Args          []string          `json:"args,omitempty"`
-	Environment   map[string]string `json:"environment,omitempty"`
-	Ports         []Port            `json:"ports,omitempty"`
+	Image         string `json:"image"`
+	RestartPolicy string `json:"restartPolicy,omitempty"`
+	// PullPolicy is always, if-not-present (default) or never.
+	PullPolicy  string            `json:"pullPolicy,omitempty"`
+	Command     []string          `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Ports       []Port            `json:"ports,omitempty"`
 	// Networks lists Network resources the workload joins.
 	Networks    []string     `json:"networks,omitempty"`
 	Mounts      []Mount      `json:"mounts,omitempty"`
@@ -26,9 +29,11 @@ type WorkloadSpec struct {
 
 // Port publishes a container port, optionally on the host.
 type Port struct {
-	ContainerPort int    `json:"containerPort"`
-	HostPort      int    `json:"hostPort,omitempty"`
-	Protocol      string `json:"protocol,omitempty"`
+	ContainerPort int `json:"containerPort"`
+	HostPort      int `json:"hostPort,omitempty"`
+	// HostIP is the host address a hostPort binds to. Defaults to 127.0.0.1 so nothing is exposed by accident.
+	HostIP   string `json:"hostIP,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // Mount attaches exactly one of a Volume, Config or Secret at MountPath. Config and Secret are read-only.
@@ -84,15 +89,27 @@ func (q *Quantity) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-var restartPolicies = map[string]bool{"always": true, "on-failure": true, "unless-stopped": true, "never": true}
+var (
+	restartPolicies = map[string]bool{"always": true, "on-failure": true, "unless-stopped": true, "never": true}
+	pullPolicies    = map[string]bool{"always": true, "if-not-present": true, "never": true}
+)
+
+// DefaultHostIP is used when a port sets hostPort without hostIP.
+const DefaultHostIP = "127.0.0.1"
 
 func (s *WorkloadSpec) setDefaults() {
 	if s.RestartPolicy == "" {
 		s.RestartPolicy = "always"
 	}
+	if s.PullPolicy == "" {
+		s.PullPolicy = "if-not-present"
+	}
 	for i := range s.Ports {
 		if s.Ports[i].Protocol == "" {
 			s.Ports[i].Protocol = "tcp"
+		}
+		if s.Ports[i].HostPort != 0 && s.Ports[i].HostIP == "" {
+			s.Ports[i].HostIP = DefaultHostIP
 		}
 	}
 }
@@ -105,6 +122,9 @@ func (s *WorkloadSpec) validate() error {
 	if !restartPolicies[s.RestartPolicy] {
 		errs = append(errs, fmt.Errorf("spec.restartPolicy: %q must be one of always, on-failure, unless-stopped, never", s.RestartPolicy))
 	}
+	if !pullPolicies[s.PullPolicy] {
+		errs = append(errs, fmt.Errorf("spec.pullPolicy: %q must be one of always, if-not-present, never", s.PullPolicy))
+	}
 	for k := range s.Environment {
 		if k == "" || strings.Contains(k, "=") {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
@@ -116,6 +136,12 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if p.HostPort < 0 || p.HostPort > 65535 {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].hostPort: %d out of range 1-65535", i, p.HostPort))
+		}
+		if p.HostIP != "" && net.ParseIP(p.HostIP) == nil {
+			errs = append(errs, fmt.Errorf("spec.ports[%d].hostIP: %q is not an IP address", i, p.HostIP))
+		}
+		if p.HostIP != "" && p.HostPort == 0 {
+			errs = append(errs, fmt.Errorf("spec.ports[%d].hostIP: requires hostPort", i))
 		}
 		if p.Protocol != "tcp" && p.Protocol != "udp" {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].protocol: %q must be tcp or udp", i, p.Protocol))

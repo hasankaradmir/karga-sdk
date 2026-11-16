@@ -45,7 +45,7 @@ func TestDecodeWorkload(t *testing.T) {
 	if r.Kind != KindWorkload || r.Metadata.Name != "redis" || w.Image != "redis:7.4" {
 		t.Fatalf("unexpected: %+v %+v", r, w)
 	}
-	if w.RestartPolicy != "always" || w.Ports[0].Protocol != "tcp" {
+	if w.RestartPolicy != "always" || w.PullPolicy != "if-not-present" || w.Ports[0].Protocol != "tcp" || w.Ports[0].HostIP != "127.0.0.1" {
 		t.Fatalf("defaults not applied: %+v", w)
 	}
 	if w.Resources.CPU != "1" || w.Resources.Memory != "512Mi" {
@@ -92,6 +92,9 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 70000}]}\n", "hostPort"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: sctp}]}\n", "protocol"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{mountPath: /d}]}\n", "exactly one"},
+		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 1, hostIP: localhost}]}\n", "hostIP"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, mountPath: data}]}\n", "absolute"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: http, command: [x]}}\n", "healthCheck.type"},
