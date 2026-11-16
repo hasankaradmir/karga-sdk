@@ -1,11 +1,14 @@
 package packages
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/hasankaradmir/karga/internal/infrastructure/archive"
 )
 
 func TestLoadMinimal(t *testing.T) {
@@ -46,7 +49,7 @@ func TestLoadErrors(t *testing.T) {
 		{"testdata/unknownfield", "field chart not found"},
 		{"testdata/withdeps", "dependencies are not supported"},
 		{linked, "only regular files"},
-		{"testdata/minimal/Package.yaml", "not a package directory"},
+		{"testdata/minimal/Package.yaml", "not a package directory or .tgz"},
 		{"testdata/missing", "no such file"},
 	}
 	for _, tt := range tests {
@@ -54,6 +57,28 @@ func TestLoadErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("Load(%s): want error containing %q, got %v", tt.path, tt.want, err)
 		}
+	}
+}
+
+func TestLoadArchive(t *testing.T) {
+	var buf bytes.Buffer
+	if err := archive.Pack("testdata/minimal", &buf); err != nil {
+		t.Fatal(err)
+	}
+	tgz := filepath.Join(t.TempDir(), "minimal-0.1.0.tgz")
+	if err := os.WriteFile(tgz, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fromTgz, err := Load(tgz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromDir, err := Load("testdata/minimal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fromTgz, fromDir) {
+		t.Fatalf("archive and directory differ:\n%+v\n%+v", fromTgz, fromDir)
 	}
 }
 

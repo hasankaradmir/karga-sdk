@@ -12,6 +12,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga/internal/domain/pkg"
+	"github.com/hasankaradmir/karga/internal/infrastructure/archive"
 	"github.com/hasankaradmir/karga/internal/infrastructure/values"
 )
 
@@ -25,24 +26,38 @@ const (
 	packagesDir  = "packages/"
 )
 
-// Load reads a package from a directory.
+// Load reads a package from a directory or a .tgz archive.
 func Load(path string) (*pkg.Package, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("%s: not a package directory", path)
+	var files map[string][]byte
+	switch {
+	case info.IsDir():
+		files, err = readDir(path)
+	case strings.HasSuffix(path, ".tgz") || strings.HasSuffix(path, ".tar.gz"):
+		files, err = readArchive(path)
+	default:
+		return nil, fmt.Errorf("%s: not a package directory or .tgz archive", path)
 	}
-	files, err := readDir(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	p, err := fromFiles(files)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return p, nil
+}
+
+func readArchive(path string) (map[string][]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }() // read-only
+	return archive.Unpack(f, archive.DefaultLimits)
 }
 
 // readDir returns every regular file under root keyed by slash-separated relative path.
