@@ -42,8 +42,12 @@ const DefaultDrainTimeout = 10 * time.Second
 // UpdateStrategy selects recreate (stop, then start) or replace (start, then stop).
 type UpdateStrategy struct {
 	Type string `json:"type,omitempty"`
-	// DrainTimeout is the graceful stop timeout of the old container in a replace.
+	// DrainTimeout is how long a replace waits for the old container's connections to finish
+	// (behind a proxy) and then its graceful stop timeout.
 	DrainTimeout string `json:"drainTimeout,omitempty"`
+	// Proxy puts a karga-managed Envoy in front of the workload (Linux only): it holds the host
+	// ports and the workload's network alias, so replace switches over without losing requests.
+	Proxy bool `json:"proxy,omitempty"`
 }
 
 // Strategy returns the requested update strategy and drain timeout, with defaults applied.
@@ -201,6 +205,9 @@ func (s *WorkloadSpec) validate() error {
 	if u := s.UpdateStrategy; u != nil {
 		if u.Type != "" && u.Type != StrategyRecreate && u.Type != StrategyReplace {
 			errs = append(errs, fmt.Errorf("spec.updateStrategy.type: %q must be recreate or replace", u.Type))
+		}
+		if u.Proxy && u.Type != StrategyReplace {
+			errs = append(errs, errors.New("spec.updateStrategy.proxy requires type: replace"))
 		}
 		if u.DrainTimeout != "" {
 			if d, err := time.ParseDuration(u.DrainTimeout); err != nil || d <= 0 {

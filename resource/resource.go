@@ -45,6 +45,9 @@ type spec interface {
 	setDefaults()
 }
 
+// ReservedPrefix starts the names karga gives its own objects and aliases (e.g. the proxy).
+const ReservedPrefix = "karga-"
+
 // ErrEmpty is returned by Decode for a document with no content (e.g. a template wrapped in a false if).
 var ErrEmpty = errors.New("empty document")
 
@@ -121,6 +124,9 @@ func ValidateSet(rs []Resource) error {
 	for _, r := range rs {
 		if !pkg.IsDNSLabel(r.Metadata.Name) {
 			errs = append(errs, fmt.Errorf("%s %q: metadata.name must be a DNS label", r.Kind, r.Metadata.Name))
+		}
+		if strings.HasPrefix(r.Metadata.Name, ReservedPrefix) {
+			errs = append(errs, fmt.Errorf("%s %q: names starting with %q are reserved for karga", r.Kind, r.Metadata.Name, ReservedPrefix))
 		}
 		if seen[r.Kind] == nil {
 			seen[r.Kind] = map[string]bool{}

@@ -96,6 +96,7 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: rolling}}\n", "updateStrategy.type"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {drainTimeout: 0s}}\n", "drainTimeout"},
+		{head + "kind: Workload\nspec: {image: a, updateStrategy: {proxy: true}}\n", "proxy requires type: replace"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 1, hostIP: localhost}]}\n", "hostIP"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
@@ -145,6 +146,7 @@ func TestValidateSet(t *testing.T) {
 		{"missing network", []Resource{vol, withNetwork(w, "backend")}, `network "backend" is not defined`},
 		{"duplicate", []Resource{vol, vol, w}, "defined more than once"},
 		{"bad name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: Bad_Name}\n")}, "DNS label"},
+		{"reserved name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: karga-net}\n")}, "reserved for karga"},
 		{"host port clash", []Resource{vol, w, renamed(w, "redis2")}, "hostPort 6379/tcp is already used"},
 		{"config is not a volume", []Resource{
 			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Config\nmetadata: {name: redis-data}\nspec: {files: {a: b}}\n"), w,
