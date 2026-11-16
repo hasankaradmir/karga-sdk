@@ -135,6 +135,7 @@ func TestValidateSet(t *testing.T) {
 		want string
 	}{
 		{"missing volume", []Resource{w}, `Volume "redis-data" is not defined`},
+		{"missing network", []Resource{vol, withNetwork(w, "backend")}, `network "backend" is not defined`},
 		{"duplicate", []Resource{vol, vol, w}, "defined more than once"},
 		{"bad name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: Bad_Name}\n")}, "DNS label"},
 		{"host port clash", []Resource{vol, w, renamed(w, "redis2")}, "hostPort 6379/tcp is already used"},
@@ -148,6 +149,13 @@ func TestValidateSet(t *testing.T) {
 			t.Errorf("%s: want error containing %q, got %v", tt.name, tt.want, err)
 		}
 	}
+}
+
+func withNetwork(r Resource, n string) Resource {
+	w := *r.Spec.(*WorkloadSpec)
+	w.Networks = []string{n}
+	r.Spec = &w
+	return r
 }
 
 func renamed(r Resource, name string) Resource {

@@ -17,9 +17,11 @@ type WorkloadSpec struct {
 	Args          []string          `json:"args,omitempty"`
 	Environment   map[string]string `json:"environment,omitempty"`
 	Ports         []Port            `json:"ports,omitempty"`
-	Mounts        []Mount           `json:"mounts,omitempty"`
-	HealthCheck   *HealthCheck      `json:"healthCheck,omitempty"`
-	Resources     *Resources        `json:"resources,omitempty"`
+	// Networks lists Network resources the workload joins.
+	Networks    []string     `json:"networks,omitempty"`
+	Mounts      []Mount      `json:"mounts,omitempty"`
+	HealthCheck *HealthCheck `json:"healthCheck,omitempty"`
+	Resources   *Resources   `json:"resources,omitempty"`
 }
 
 // Port publishes a container port, optionally on the host.

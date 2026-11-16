@@ -143,6 +143,11 @@ func ValidateSet(rs []Resource) error {
 				errs = append(errs, fmt.Errorf("%s %q: mount %s: %s %q is not defined", KindWorkload, r.Metadata.Name, m.MountPath, kind, name))
 			}
 		}
+		for _, n := range w.Networks {
+			if !seen[KindNetwork][n] {
+				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))
+			}
+		}
 		for _, p := range w.Ports {
 			if p.HostPort == 0 {
 				continue
