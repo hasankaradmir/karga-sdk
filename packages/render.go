@@ -19,6 +19,8 @@ type Options struct {
 	ReleaseName string
 	// Revision defaults to 1.
 	Revision int
+	// BaseOverrides are applied before ValueFiles (e.g. values reused from the previous revision).
+	BaseOverrides map[string]any
 	// ValueFiles are applied in order, then Sets, then SetStrings.
 	ValueFiles []string
 	Sets       []string
@@ -37,7 +39,10 @@ type Document struct {
 
 // Manifest is the result of rendering a package.
 type Manifest struct {
-	Package   pkg.Metadata
+	Package pkg.Metadata
+	// Overrides are the user-supplied values (BaseOverrides, -f, --set, --set-string); Values is the
+	// result of merging them onto the package defaults.
+	Overrides map[string]any
 	Values    map[string]any
 	Documents []Document
 }
@@ -55,10 +60,11 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 	if err := p.Metadata.Validate(); err != nil {
 		return nil, prefixed(metadataFile, err)
 	}
-	vals, err := mergeValues(p.Values, opts)
+	overrides, err := Overrides(opts)
 	if err != nil {
 		return nil, err
 	}
+	vals := values.Merge(p.Values, overrides)
 	if err := values.Validate(p.Schema, vals, opts.Strict); err != nil {
 		return nil, err
 	}
@@ -73,7 +79,7 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
-	m := &Manifest{Package: p.Metadata, Values: vals}
+	m := &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals}
 	var errs []error
 	for _, o := range outs {
 		for _, doc := range docSeparator.Split(o.Content, -1) {
@@ -101,14 +107,15 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 	return m, nil
 }
 
-func mergeValues(defaults map[string]any, opts Options) (map[string]any, error) {
-	vals := defaults
+// Overrides stacks the user-supplied values of opts, keeping nulls so they delete defaults later.
+func Overrides(opts Options) (map[string]any, error) {
+	vals := values.Overlay(nil, opts.BaseOverrides)
 	for _, f := range opts.ValueFiles {
 		fv, err := values.LoadFile(f)
 		if err != nil {
 			return nil, err
 		}
-		vals = values.Merge(vals, fv)
+		vals = values.Overlay(vals, fv)
 	}
 	sets := map[string]any{}
 	for _, s := range opts.Sets {
@@ -121,7 +128,16 @@ func mergeValues(defaults map[string]any, opts Options) (map[string]any, error) 
 			return nil, err
 		}
 	}
-	return values.Merge(vals, sets), nil
+	return values.Overlay(vals, sets), nil
+}
+
+// Resources returns the decoded resources of the manifest in document order.
+func (m *Manifest) Resources() []resource.Resource {
+	rs := make([]resource.Resource, len(m.Documents))
+	for i, d := range m.Documents {
+		rs[i] = d.Resource
+	}
+	return rs
 }
 
 const redacted = "<redacted>"

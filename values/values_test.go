@@ -84,3 +84,17 @@ func TestMergeNilBase(t *testing.T) {
 		t.Fatalf("got %#v", got)
 	}
 }
+
+func TestOverlayKeepsNullsForMerge(t *testing.T) {
+	defaults := mustDecode(t, "storage: {size: 5Gi}\nimage: {tag: '7.4', repo: redis}\n")
+	f1 := mustDecode(t, "storage: null\nimage: {tag: '7.2'}\n")
+	f2 := mustDecode(t, "image: {tag: '7.0'}\n")
+	overrides := Overlay(Overlay(nil, f1), f2)
+	if v, ok := overrides["storage"]; !ok || v != nil {
+		t.Fatalf("Overlay dropped the null: %#v", overrides)
+	}
+	// Stacking overrides first gives the same result as merging them one by one onto the defaults.
+	if got, want := Merge(defaults, overrides), Merge(Merge(defaults, f1), f2); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}

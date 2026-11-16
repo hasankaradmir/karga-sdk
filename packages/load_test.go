@@ -89,3 +89,25 @@ func keys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+func TestDigest(t *testing.T) {
+	d1, err := Digest("testdata/minimal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := archive.Pack("testdata/minimal", &buf); err != nil {
+		t.Fatal(err)
+	}
+	tgz := filepath.Join(t.TempDir(), "m.tgz")
+	if err := os.WriteFile(tgz, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d2, err := Digest(tgz)
+	if err != nil || d1 != d2 {
+		t.Fatalf("directory digest %s != archive digest %s (%v)", d1, d2, err)
+	}
+	if _, err := Digest("testdata/missing"); err == nil {
+		t.Fatal("expected error")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -136,5 +137,25 @@ func TestLint(t *testing.T) {
 		if !strings.HasPrefix(i, "Package.yaml: ") {
 			t.Fatalf("issue without prefix: %q", i)
 		}
+	}
+}
+
+func TestRenderOverrides(t *testing.T) {
+	m, err := renderDemo(t, Options{
+		BaseOverrides: map[string]any{"port": 9000, "storage": map[string]any{"enabled": false}},
+		Sets:          []string{"image.tag=1.28", "password=null"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"port": 9000, "storage": map[string]any{"enabled": false}, "image": map[string]any{"tag": "1.28"}, "password": nil}
+	if !reflect.DeepEqual(m.Overrides, want) {
+		t.Fatalf("overrides: %#v", m.Overrides)
+	}
+	if _, ok := m.Values["password"]; ok || m.Values["port"] != 9000 {
+		t.Fatalf("values: %#v", m.Values)
+	}
+	if len(m.Resources()) != len(m.Documents) {
+		t.Fatal("Resources length")
 	}
 }

@@ -87,16 +87,33 @@ func Merge(base, override map[string]any) map[string]any {
 	return out
 }
 
-func mergeInto(dst, src map[string]any) {
+// Overlay is Merge without deletions: nil values are kept, so stacked overrides (-f files, --set,
+// reused values) can still delete keys when finally merged onto the defaults with Merge.
+func Overlay(base, override map[string]any) map[string]any {
+	out, _ := deepCopy(base).(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+	overlayInto(out, override, false)
+	return out
+}
+
+func mergeInto(dst, src map[string]any) { overlayInto(dst, src, true) }
+
+func overlayInto(dst, src map[string]any, deleteNil bool) {
 	for k, v := range src {
 		if v == nil {
-			delete(dst, k)
+			if deleteNil {
+				delete(dst, k)
+			} else {
+				dst[k] = nil
+			}
 			continue
 		}
 		srcMap, srcIsMap := v.(map[string]any)
 		dstMap, dstIsMap := dst[k].(map[string]any)
 		if srcIsMap && dstIsMap {
-			mergeInto(dstMap, srcMap)
+			overlayInto(dstMap, srcMap, deleteNil)
 			continue
 		}
 		dst[k] = deepCopy(v)
