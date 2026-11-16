@@ -117,6 +117,10 @@ func Unpack(r io.Reader, lim Limits) (map[string][]byte, error) {
 		}
 
 		name := hdr.Name
+		// macOS tar adds AppleDouble metadata entries ("._name"); they are never package content.
+		if strings.HasPrefix(path.Base(name), "._") {
+			continue
+		}
 		if strings.Contains(name, `\`) || path.IsAbs(name) {
 			return nil, fmt.Errorf("%s: invalid path in archive", name)
 		}

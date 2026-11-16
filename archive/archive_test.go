@@ -112,6 +112,17 @@ func makeTar(t *testing.T, entries ...entry) []byte {
 	return buf.Bytes()
 }
 
+func TestUnpackSkipsAppleDouble(t *testing.T) {
+	data := makeTar(t, entry{name: "._redis", body: "meta"}, entry{name: "redis/._Package.yaml", body: "meta"}, entry{name: "redis/Package.yaml", body: "x"})
+	got, err := Unpack(bytes.NewReader(data), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, map[string][]byte{"Package.yaml": []byte("x")}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestUnpackRejectsHarmfulArchives(t *testing.T) {
 	tests := []struct {
 		name    string
