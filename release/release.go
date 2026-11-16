@@ -4,6 +4,7 @@ package release
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -33,10 +34,8 @@ var transitions = map[Status][]Status{
 
 // Transition validates moving from one status to another.
 func Transition(from, to Status) error {
-	for _, s := range transitions[from] {
-		if s == to {
-			return nil
-		}
+	if slices.Contains(transitions[from], to) {
+		return nil
 	}
 	return fmt.Errorf("release cannot go from %s to %s", from, to)
 }
