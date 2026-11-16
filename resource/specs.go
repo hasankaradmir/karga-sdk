@@ -25,6 +25,39 @@ type WorkloadSpec struct {
 	Mounts      []Mount      `json:"mounts,omitempty"`
 	HealthCheck *HealthCheck `json:"healthCheck,omitempty"`
 	Resources   *Resources   `json:"resources,omitempty"`
+	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
+	// only, so it is not part of the workload's digest.
+	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
+}
+
+// Update strategies (tech design §11).
+const (
+	StrategyRecreate = "recreate"
+	StrategyReplace  = "replace"
+)
+
+// DefaultDrainTimeout is how long the old container gets to stop gracefully after a replace.
+const DefaultDrainTimeout = 10 * time.Second
+
+// UpdateStrategy selects recreate (stop, then start) or replace (start, then stop).
+type UpdateStrategy struct {
+	Type string `json:"type,omitempty"`
+	// DrainTimeout is the graceful stop timeout of the old container in a replace.
+	DrainTimeout string `json:"drainTimeout,omitempty"`
+}
+
+// Strategy returns the requested update strategy and drain timeout, with defaults applied.
+func (s *WorkloadSpec) Strategy() (string, time.Duration) {
+	typ, drain := StrategyRecreate, DefaultDrainTimeout
+	if u := s.UpdateStrategy; u != nil {
+		if u.Type != "" {
+			typ = u.Type
+		}
+		if d, err := time.ParseDuration(u.DrainTimeout); err == nil && d > 0 {
+			drain = d
+		}
+	}
+	return typ, drain
 }
 
 // Port publishes a container port, optionally on the host.
@@ -42,6 +75,8 @@ type Mount struct {
 	Config    string `json:"config,omitempty"`
 	Secret    string `json:"secret,omitempty"`
 	MountPath string `json:"mountPath"`
+	// ReadOnly mounts a volume read-only. Config and Secret mounts are always read-only.
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // Target returns the kind and name of the mounted resource.
@@ -159,6 +194,16 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if !path.IsAbs(m.MountPath) {
 			errs = append(errs, fmt.Errorf("spec.mounts[%d].mountPath: %q must be an absolute path", i, m.MountPath))
+		}
+	}
+	if u := s.UpdateStrategy; u != nil {
+		if u.Type != "" && u.Type != StrategyRecreate && u.Type != StrategyReplace {
+			errs = append(errs, fmt.Errorf("spec.updateStrategy.type: %q must be recreate or replace", u.Type))
+		}
+		if u.DrainTimeout != "" {
+			if d, err := time.ParseDuration(u.DrainTimeout); err != nil || d <= 0 {
+				errs = append(errs, fmt.Errorf("spec.updateStrategy.drainTimeout: %q is not a positive duration", u.DrainTimeout))
+			}
 		}
 	}
 	if hc := s.HealthCheck; hc != nil {

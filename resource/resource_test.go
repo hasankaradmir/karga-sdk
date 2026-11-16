@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const workloadDoc = `
@@ -93,6 +94,8 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: sctp}]}\n", "protocol"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
+		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: rolling}}\n", "updateStrategy.type"},
+		{head + "kind: Workload\nspec: {image: a, updateStrategy: {drainTimeout: 0s}}\n", "drainTimeout"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 1, hostIP: localhost}]}\n", "hostIP"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
@@ -200,5 +203,16 @@ func TestDecodeYAML12(t *testing.T) {
 	w := mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, environment: {FLAG: no}}\n")
 	if w.Spec.(*WorkloadSpec).Environment["FLAG"] != "no" {
 		t.Fatalf("env: %+v", w.Spec)
+	}
+}
+
+func TestUpdateStrategyDefaults(t *testing.T) {
+	w := mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a}\n").Spec.(*WorkloadSpec)
+	if typ, drain := w.Strategy(); typ != StrategyRecreate || drain != DefaultDrainTimeout || w.UpdateStrategy != nil {
+		t.Fatalf("defaults: %s %s %+v", typ, drain, w.UpdateStrategy)
+	}
+	w = mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, updateStrategy: {type: replace, drainTimeout: 30s}, mounts: [{volume: v, mountPath: /v, readOnly: true}]}\n").Spec.(*WorkloadSpec)
+	if typ, drain := w.Strategy(); typ != StrategyReplace || drain != 30*time.Second || !w.Mounts[0].ReadOnly {
+		t.Fatalf("explicit: %s %s %+v", typ, drain, w.Mounts)
 	}
 }
