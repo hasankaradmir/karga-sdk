@@ -144,7 +144,7 @@ func funcMap(root *template.Template) template.FuncMap {
 		return v, nil
 	}
 	fm["toYaml"] = func(v any) (string, error) {
-		b, err := yaml.Marshal(v)
+		b, err := ToYAML(v)
 		if err != nil {
 			return "", err
 		}
@@ -158,6 +158,20 @@ func funcMap(root *template.Template) template.FuncMap {
 		return m, nil
 	}
 	return fm
+}
+
+// ToYAML marshals v with 2-space indentation and sorted map keys.
+func ToYAML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func deniedFunc(name, reason string) func(...any) (string, error) {

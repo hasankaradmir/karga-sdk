@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
-
 	"github.com/hasankaradmir/karga/internal/domain/pkg"
 	"github.com/hasankaradmir/karga/internal/domain/resource"
 	"github.com/hasankaradmir/karga/internal/infrastructure/renderer"
@@ -162,7 +160,7 @@ func maskSecret(r resource.Resource, s *resource.SecretSpec) (string, error) {
 	if err := json.Unmarshal(js, &generic); err != nil {
 		return "", err
 	}
-	out, err := yaml.Marshal(generic)
+	out, err := renderer.ToYAML(generic)
 	if err != nil {
 		return "", err
 	}

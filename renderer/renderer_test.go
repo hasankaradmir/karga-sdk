@@ -50,6 +50,7 @@ func TestRenderBasics(t *testing.T) {
 		{`{{ keys .Values.labels | join "," }}`, "a,b,c"},
 		{`{{ values .Values.labels | join "," }}`, "1,2,3"},
 		{`{{ .Values.labels | toYaml }}`, "a: \"1\"\nb: \"2\"\nc: \"3\""},
+		{`{{ dict "a" (dict "b" 1) | toYaml }}`, "a:\n  b: 1"},
 		{`{{ (fromYaml "a: 1").a }}`, "1"},
 		{`{{ "hello" | upper | quote }}`, `"HELLO"`},
 		{`{{ tpl .Values.extra . }}`, "name: my-redis"},
