@@ -85,6 +85,8 @@ type Package struct {
 	Metadata Metadata
 	// Values are the package defaults from values.yaml.
 	Values map[string]any
+	// RawValues is values.yaml as written (comments included), nil if absent.
+	RawValues []byte
 	// Schema is the raw values.schema.json, nil if absent.
 	Schema []byte
 	Readme []byte

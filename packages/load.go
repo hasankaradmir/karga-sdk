@@ -112,6 +112,7 @@ func fromFiles(files map[string][]byte) (*pkg.Package, error) {
 			return nil, fmt.Errorf("%s: %w", valuesFile, err)
 		}
 		p.Values = vals
+		p.RawValues = v
 	}
 
 	hasVendored := false
