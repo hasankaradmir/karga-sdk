@@ -21,6 +21,7 @@ type Context struct {
 	Values  map[string]any
 	Release Release
 	Package PackageInfo
+	Files   Files
 }
 
 // Release identifies the release being rendered.
