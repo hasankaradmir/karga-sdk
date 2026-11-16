@@ -103,6 +103,7 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: http, command: [x]}}\n", "healthCheck.type"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec}}\n", "healthCheck.command"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], interval: 10}}\n", "interval"},
+		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], startPeriod: soon}}\n", "startPeriod"},
 		{head + "kind: Workload\nspec: {image: a, resources: {memory: 512MB}}\n", "memory"},
 		{head + "kind: Workload\nspec: {image: a, resources: {cpu: -1}}\n", "cpu"},
 		{head + "kind: Workload\nspec: {image: a, environment: {PORT: 6379}}\n", "environment"},

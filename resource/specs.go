@@ -98,6 +98,8 @@ type HealthCheck struct {
 	Interval string   `json:"interval,omitempty"`
 	Timeout  string   `json:"timeout,omitempty"`
 	Retries  int      `json:"retries,omitempty"`
+	// StartPeriod is a grace period after start during which failed checks do not count.
+	StartPeriod string `json:"startPeriod,omitempty"`
 }
 
 // Resources limits the workload.
@@ -213,7 +215,7 @@ func (s *WorkloadSpec) validate() error {
 		if len(hc.Command) == 0 {
 			errs = append(errs, errors.New("spec.healthCheck.command is required"))
 		}
-		for name, d := range map[string]string{"interval": hc.Interval, "timeout": hc.Timeout} {
+		for name, d := range map[string]string{"interval": hc.Interval, "timeout": hc.Timeout, "startPeriod": hc.StartPeriod} {
 			if d == "" {
 				continue
 			}
