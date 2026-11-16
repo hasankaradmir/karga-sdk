@@ -45,6 +45,8 @@ type Manifest struct {
 	Overrides map[string]any
 	Values    map[string]any
 	Documents []Document
+	// SecretPaths are the writeOnly value paths from values.schema.json: never store or print them.
+	SecretPaths [][]string
 }
 
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
@@ -79,7 +81,11 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
-	m := &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals}
+	secretPaths, err := values.SecretPaths(p.Schema)
+	if err != nil {
+		return nil, err
+	}
+	m := &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals, SecretPaths: secretPaths}
 	var errs []error
 	for _, o := range outs {
 		for _, doc := range docSeparator.Split(o.Content, -1) {
