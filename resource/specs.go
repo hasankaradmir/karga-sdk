@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -43,11 +44,8 @@ const DefaultDrainTimeout = 10 * time.Second
 type UpdateStrategy struct {
 	Type string `json:"type,omitempty"`
 	// DrainTimeout is how long a replace waits for the old container's connections to finish
-	// (behind a proxy) and then its graceful stop timeout.
+	// (behind karga's proxies) and then its graceful stop timeout.
 	DrainTimeout string `json:"drainTimeout,omitempty"`
-	// Proxy puts a karga-managed Envoy in front of the workload (Linux only): it holds the host
-	// ports and the workload's network alias, so replace switches over without losing requests.
-	Proxy bool `json:"proxy,omitempty"`
 }
 
 // Strategy returns the requested update strategy and drain timeout, with defaults applied.
@@ -71,6 +69,19 @@ type Port struct {
 	// HostIP is the host address a hostPort binds to. Defaults to 127.0.0.1 so nothing is exposed by accident.
 	HostIP   string `json:"hostIP,omitempty"`
 	Protocol string `json:"protocol,omitempty"`
+	// Routes serve the port as HTTP on the host gateway, selected by Host header and path prefix.
+	// Several workloads, also of other releases, can share a route's hostPort.
+	Routes []Route `json:"routes,omitempty"`
+}
+
+// Route is an HTTP route on the host gateway (Linux only).
+type Route struct {
+	Host string `json:"host"`
+	// Path is a prefix; it defaults to "/".
+	Path string `json:"path,omitempty"`
+	// HostPort defaults to 80, HostIP to 127.0.0.1.
+	HostPort int    `json:"hostPort,omitempty"`
+	HostIP   string `json:"hostIP,omitempty"`
 }
 
 // Mount attaches exactly one of a Volume, Config or Secret at MountPath. Config and Secret are read-only.
@@ -138,6 +149,11 @@ var (
 // DefaultHostIP is used when a port sets hostPort without hostIP.
 const DefaultHostIP = "127.0.0.1"
 
+// DefaultRoutePort is the host port of a route without hostPort.
+const DefaultRoutePort = 80
+
+var routeHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
 func (s *WorkloadSpec) setDefaults() {
 	if s.RestartPolicy == "" {
 		s.RestartPolicy = "always"
@@ -151,6 +167,18 @@ func (s *WorkloadSpec) setDefaults() {
 		}
 		if s.Ports[i].HostPort != 0 && s.Ports[i].HostIP == "" {
 			s.Ports[i].HostIP = DefaultHostIP
+		}
+		for j := range s.Ports[i].Routes {
+			r := &s.Ports[i].Routes[j]
+			if r.Path == "" {
+				r.Path = "/"
+			}
+			if r.HostPort == 0 {
+				r.HostPort = DefaultRoutePort
+			}
+			if r.HostIP == "" {
+				r.HostIP = DefaultHostIP
+			}
 		}
 	}
 }
@@ -171,6 +199,7 @@ func (s *WorkloadSpec) validate() error {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
 		}
 	}
+	routes := map[string]bool{}
 	for i, p := range s.Ports {
 		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].containerPort: %d out of range 1-65535", i, p.ContainerPort))
@@ -186,6 +215,32 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if p.Protocol != "tcp" && p.Protocol != "udp" {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].protocol: %q must be tcp or udp", i, p.Protocol))
+		}
+		if len(p.Routes) > 0 && p.HostPort != 0 {
+			errs = append(errs, fmt.Errorf("spec.ports[%d]: hostPort and routes are exclusive (routes set their own hostPort)", i))
+		}
+		if len(p.Routes) > 0 && p.Protocol == "udp" {
+			errs = append(errs, fmt.Errorf("spec.ports[%d].routes: require protocol tcp", i))
+		}
+		for j, r := range p.Routes {
+			at := fmt.Sprintf("spec.ports[%d].routes[%d]", i, j)
+			if !routeHost.MatchString(r.Host) {
+				errs = append(errs, fmt.Errorf("%s.host: %q is not a lowercase host name", at, r.Host))
+			}
+			if !strings.HasPrefix(r.Path, "/") {
+				errs = append(errs, fmt.Errorf("%s.path: %q must start with /", at, r.Path))
+			}
+			if r.HostPort < 1 || r.HostPort > 65535 {
+				errs = append(errs, fmt.Errorf("%s.hostPort: %d out of range 1-65535", at, r.HostPort))
+			}
+			if net.ParseIP(r.HostIP) == nil {
+				errs = append(errs, fmt.Errorf("%s.hostIP: %q is not an IP address", at, r.HostIP))
+			}
+			key := fmt.Sprintf("%s:%d %s%s", r.HostIP, r.HostPort, r.Host, r.Path)
+			if routes[key] {
+				errs = append(errs, fmt.Errorf("%s: duplicate route %s", at, key))
+			}
+			routes[key] = true
 		}
 	}
 	for i, m := range s.Mounts {
@@ -205,9 +260,6 @@ func (s *WorkloadSpec) validate() error {
 	if u := s.UpdateStrategy; u != nil {
 		if u.Type != "" && u.Type != StrategyRecreate && u.Type != StrategyReplace {
 			errs = append(errs, fmt.Errorf("spec.updateStrategy.type: %q must be recreate or replace", u.Type))
-		}
-		if u.Proxy && u.Type != StrategyReplace {
-			errs = append(errs, errors.New("spec.updateStrategy.proxy requires type: replace"))
 		}
 		if u.DrainTimeout != "" {
 			if d, err := time.ParseDuration(u.DrainTimeout); err != nil || d <= 0 {

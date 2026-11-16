@@ -69,6 +69,13 @@ func TestDecodeDefaults(t *testing.T) {
 	if n.Spec.(*NetworkSpec).Driver != "bridge" {
 		t.Fatalf("network defaults: %+v", n.Spec)
 	}
+	w, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 3000, routes: [{host: app.local}]}]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := w.Spec.(*WorkloadSpec).Ports[0].Routes[0]; got != (Route{Host: "app.local", Path: "/", HostPort: 80, HostIP: "127.0.0.1"}) {
+		t.Fatalf("route defaults: %+v", got)
+	}
 }
 
 func TestDecodeEmpty(t *testing.T) {
@@ -96,7 +103,14 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: rolling}}\n", "updateStrategy.type"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {drainTimeout: 0s}}\n", "drainTimeout"},
-		{head + "kind: Workload\nspec: {image: a, updateStrategy: {proxy: true}}\n", "proxy requires type: replace"},
+		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: replace, proxy: true}}\n", "proxy"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 80, routes: [{host: a.local}]}]}\n", "exclusive"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: udp, routes: [{host: a.local}]}]}\n", "require protocol tcp"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: A_b}]}]}\n", "host name"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, path: api}]}]}\n", "must start with /"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, hostPort: 70000}]}]}\n", "routes[0].hostPort"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, hostIP: x}]}]}\n", "routes[0].hostIP"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a}]}, {containerPort: 2, routes: [{host: a, path: /}]}]}\n", "duplicate route"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 1, hostIP: localhost}]}\n", "hostIP"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
