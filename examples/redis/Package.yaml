@@ -7,4 +7,3 @@ maintainers:
 runtime:
   supported:
     - docker
-    - podman
