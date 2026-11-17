@@ -36,6 +36,10 @@ type WorkloadSpec struct {
 	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
 	// only, so it is not part of the workload's digest.
 	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
+	// AnonymousVolumes are the image VOLUME paths the current container keeps in anonymous volumes
+	// (no Volume is mounted there). It is found in the runtime before planning, not written in a
+	// package, and is not part of the spec.
+	AnonymousVolumes []string `json:"-"`
 }
 
 // Update strategies (tech design §11).
