@@ -50,6 +50,8 @@ type Release struct {
 	Status          Status    `json:"status"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
+	// Paused releases are left alone by the reconciler.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // RevisionStatus is the outcome of one revision.

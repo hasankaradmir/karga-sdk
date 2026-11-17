@@ -38,6 +38,10 @@ type Backend interface {
 	RestoreVolume(ctx context.Context, req releases.VolumeRestoreRequest) error
 	BackupState(ctx context.Context, w io.Writer) error
 
+	Reconcile(ctx context.Context, name string, force bool) (*releases.ReconcileResult, error)
+	Pause(ctx context.Context, name string, paused bool) error
+	Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error)
+
 	Gateway(ctx context.Context) ([]gateway.Exposed, error)
 	GatewayHealth(ctx context.Context) (gateway.State, error)
 	GatewaySettings(ctx context.Context) (gateway.Settings, map[string][]string, error)
@@ -56,6 +60,10 @@ const DefaultSocket = "/run/karga/karga.sock"
 type (
 	nameRequest struct {
 		Name     string `json:"name"`
+		Force    bool   `json:"force,omitempty"`
+		Paused   bool   `json:"paused,omitempty"`
+		After    int64  `json:"after,omitempty"`
+		Limit    int    `json:"limit,omitempty"`
 		Revision int    `json:"revision,omitempty"`
 		All      bool   `json:"all,omitempty"`
 		From     int    `json:"from,omitempty"`

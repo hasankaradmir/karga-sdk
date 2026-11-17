@@ -419,3 +419,20 @@ func (c *Client) Exec(ctx context.Context, rel, workload string, opts ports.Exec
 		}
 	}
 }
+
+// Reconcile implements Backend.
+func (c *Client) Reconcile(ctx context.Context, name string, force bool) (*releases.ReconcileResult, error) {
+	var out releases.ReconcileResult
+	return &out, c.call(ctx, "/v1/reconcile", nameRequest{Name: name, Force: force}, &out)
+}
+
+// Pause implements Backend.
+func (c *Client) Pause(ctx context.Context, name string, paused bool) error {
+	return c.call(ctx, "/v1/pause", nameRequest{Name: name, Paused: paused}, nil)
+}
+
+// Events implements Backend.
+func (c *Client) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
+	var out []release.Operation
+	return out, c.call(ctx, "/v1/events", nameRequest{Name: name, After: afterID, Limit: limit}, &out)
+}

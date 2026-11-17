@@ -59,6 +59,15 @@ func NewServer(b Backend, version string) *Server {
 	s.mux.HandleFunc("POST /v1/resources", handle(func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Resources(ctx, req.Name)
 	}))
+	s.mux.HandleFunc("POST /v1/reconcile", handle(func(ctx context.Context, req nameRequest) (any, error) {
+		return b.Reconcile(ctx, req.Name, req.Force)
+	}))
+	s.mux.HandleFunc("POST /v1/pause", handle(func(ctx context.Context, req nameRequest) (any, error) {
+		return struct{}{}, b.Pause(ctx, req.Name, req.Paused)
+	}))
+	s.mux.HandleFunc("POST /v1/events", handle(func(ctx context.Context, req nameRequest) (any, error) {
+		return b.Events(ctx, req.Name, req.After, req.Limit)
+	}))
 	s.mux.HandleFunc("POST /v1/gateway/routes", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.Gateway(ctx) }))
 	s.mux.HandleFunc("POST /v1/gateway/health", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.GatewayHealth(ctx) }))
 	s.mux.HandleFunc("POST /v1/gateway/settings", handle(func(ctx context.Context, _ struct{}) (any, error) {
