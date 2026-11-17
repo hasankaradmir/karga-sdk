@@ -77,6 +77,13 @@ func TestDecodeDefaults(t *testing.T) {
 	if got := w.Spec.(*WorkloadSpec).Ports[0].Routes[0]; got != (Route{Host: "app.local", Path: "/", HostPort: 80, HostIP: "127.0.0.1"}) {
 		t.Fatalf("route defaults: %+v", got)
 	}
+	hw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 53, protocol: udp}, {containerPort: 8080}], healthCheck: {type: http}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hc := hw.Spec.(*WorkloadSpec).HealthCheck; hc.Port != 8080 || hc.Path != "/" {
+		t.Fatalf("http healthcheck defaults: %+v", hc)
+	}
 	tw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 3000, routes: [{host: app.local, tls: {secret: c}}]}]}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +132,11 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, mountPath: data}]}\n", "absolute"},
-		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: http, command: [x]}}\n", "healthCheck.type"},
+		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: grpc}}\n", "healthCheck.type"},
+		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: tcp}}\n", "healthCheck.port"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: http, port: 81}}\n", "healthCheck.port"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: tcp, command: [x]}}\n", "not used by type tcp"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: http, path: health}}\n", "must start with /"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec}}\n", "healthCheck.command"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], interval: 10}}\n", "interval"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], startPeriod: soon}}\n", "startPeriod"},

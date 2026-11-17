@@ -142,14 +142,26 @@ func (m Mount) Target() (kind, name string) {
 
 // HealthCheck probes the workload. Only exec checks exist in v1alpha1.
 type HealthCheck struct {
-	Type     string   `json:"type"`
-	Command  []string `json:"command"`
-	Interval string   `json:"interval,omitempty"`
-	Timeout  string   `json:"timeout,omitempty"`
-	Retries  int      `json:"retries,omitempty"`
+	// Type is exec (Command runs inside the container), tcp (a connection to Port opens) or http
+	// (GET Path on Port answers 2xx/3xx). tcp and http need no tool in the image: karga checks them.
+	Type    string   `json:"type"`
+	Command []string `json:"command,omitempty"`
+	// Port defaults to the first tcp containerPort; Path to "/".
+	Port     int    `json:"port,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Interval string `json:"interval,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`
+	Retries  int    `json:"retries,omitempty"`
 	// StartPeriod is a grace period after start during which failed checks do not count.
 	StartPeriod string `json:"startPeriod,omitempty"`
 }
+
+// Health check types.
+const (
+	HealthExec = "exec"
+	HealthTCP  = "tcp"
+	HealthHTTP = "http"
+)
 
 // Resources limits the workload.
 type Resources struct {
@@ -220,6 +232,19 @@ func (s *WorkloadSpec) setDefaults() {
 	if s.Resources.Pids == nil {
 		p := DefaultPids
 		s.Resources.Pids = &p
+	}
+	if hc := s.HealthCheck; hc != nil && (hc.Type == HealthTCP || hc.Type == HealthHTTP) {
+		if hc.Port == 0 {
+			for _, p := range s.Ports {
+				if p.Protocol == "tcp" || p.Protocol == "" {
+					hc.Port = p.ContainerPort
+					break
+				}
+			}
+		}
+		if hc.Type == HealthHTTP && hc.Path == "" {
+			hc.Path = "/"
+		}
 	}
 	if s.Logging == nil {
 		s.Logging = &Logging{}
@@ -350,11 +375,23 @@ func (s *WorkloadSpec) validate() error {
 		}
 	}
 	if hc := s.HealthCheck; hc != nil {
-		if hc.Type != "exec" {
-			errs = append(errs, fmt.Errorf("spec.healthCheck.type: %q is not supported (want exec)", hc.Type))
-		}
-		if len(hc.Command) == 0 {
-			errs = append(errs, errors.New("spec.healthCheck.command is required"))
+		switch hc.Type {
+		case HealthExec:
+			if len(hc.Command) == 0 {
+				errs = append(errs, errors.New("spec.healthCheck.command is required"))
+			}
+		case HealthTCP, HealthHTTP:
+			if len(hc.Command) > 0 {
+				errs = append(errs, fmt.Errorf("spec.healthCheck.command: not used by type %s", hc.Type))
+			}
+			if !slices.ContainsFunc(s.Ports, func(p Port) bool { return p.ContainerPort == hc.Port && p.Protocol == "tcp" }) {
+				errs = append(errs, fmt.Errorf("spec.healthCheck.port: %d is not a tcp containerPort of the workload", hc.Port))
+			}
+			if hc.Type == HealthHTTP && !strings.HasPrefix(hc.Path, "/") {
+				errs = append(errs, fmt.Errorf("spec.healthCheck.path: %q must start with /", hc.Path))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("spec.healthCheck.type: %q is not supported (want exec, tcp or http)", hc.Type))
 		}
 		for name, d := range map[string]string{"interval": hc.Interval, "timeout": hc.Timeout, "startPeriod": hc.StartPeriod} {
 			if d == "" {
