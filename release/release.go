@@ -77,10 +77,12 @@ type Revision struct {
 	Values    map[string]any `json:"-"`
 	ValuesAll map[string]any `json:"-"`
 	// Manifest is the rendered resources as a JSON array, with secret values replaced by digests.
-	Manifest    json.RawMessage `json:"-"`
-	Status      RevisionStatus  `json:"status"`
-	Description string          `json:"description"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	Manifest json.RawMessage `json:"-"`
+	// Notes is the package's rendered NOTES.txt (writeOnly values redacted).
+	Notes       string         `json:"-"`
+	Status      RevisionStatus `json:"status"`
+	Description string         `json:"description"`
+	CreatedAt   time.Time      `json:"createdAt"`
 }
 
 // AppliedResource is what is currently applied on the runtime for one resource of a release.

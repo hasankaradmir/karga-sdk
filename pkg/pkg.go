@@ -90,6 +90,8 @@ type Package struct {
 	// Schema is the raw values.schema.json, nil if absent.
 	Schema []byte
 	Readme []byte
+	// Notes is NOTES.txt, a template shown after install and upgrade; nil if absent.
+	Notes []byte
 	// Templates maps paths relative to templates/ to their content.
 	Templates map[string][]byte
 	// Files maps paths relative to files/ to their content.

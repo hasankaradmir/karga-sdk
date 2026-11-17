@@ -1,0 +1,17 @@
+# Image of the web server.
+image:
+  repository: nginx
+  tag: 1.27-alpine
+
+# Host port the service is published on (127.0.0.1 unless hostIP says otherwise).
+service:
+  port: 8080
+  hostIP: 127.0.0.1
+
+# Optional HTTP route on the host gateway (Linux): e.g. host: app.local
+route:
+  host: ""
+
+resources:
+  memory: 128Mi
+  cpu: 0.5

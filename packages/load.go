@@ -22,6 +22,7 @@ const (
 	valuesFile   = "values.yaml"
 	schemaFile   = "values.schema.json"
 	readmeFile   = "README.md"
+	notesFile    = "NOTES.txt"
 	templatesDir = "templates/"
 	filesDir     = "files/"
 	packagesDir  = "packages/"
@@ -104,6 +105,7 @@ func fromFiles(files map[string][]byte) (*pkg.Package, error) {
 		Values:    map[string]any{},
 		Schema:    files[schemaFile],
 		Readme:    files[readmeFile],
+		Notes:     files[notesFile],
 		Templates: map[string][]byte{},
 		Files:     map[string][]byte{},
 	}

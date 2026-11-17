@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -47,6 +48,8 @@ type Manifest struct {
 	Documents []Document
 	// SecretPaths are the writeOnly value paths from values.schema.json: never store or print them.
 	SecretPaths [][]string
+	// Notes is the rendered NOTES.txt with writeOnly values replaced by <redacted>.
+	Notes string
 }
 
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
@@ -71,7 +74,12 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
-	outs, err := renderer.Render(p.Templates, renderer.Context{
+	tpls := p.Templates
+	if p.Notes != nil {
+		tpls = maps.Clone(p.Templates)
+		tpls[notesTemplate] = p.Notes
+	}
+	outs, err := renderer.Render(tpls, renderer.Context{
 		Values:  vals,
 		Release: renderer.Release{Name: opts.ReleaseName, Revision: opts.Revision},
 		Package: renderer.PackageInfo{Name: p.Metadata.Name, Version: p.Metadata.Version},
@@ -88,13 +96,25 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 	m := &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals, SecretPaths: secretPaths}
 	var errs []error
 	for _, o := range outs {
-		for _, doc := range docSeparator.Split(o.Content, -1) {
+		if o.Path == notesTemplate {
+			m.Notes = redactValues(strings.TrimSpace(o.Content), vals, secretPaths)
+			continue
+		}
+		docs := docSeparator.Split(o.Content, -1)
+		line := 1 // first line of the current document in the rendered output
+		for i, doc := range docs {
+			start := line
+			line += strings.Count(doc, "\n") // the next document starts with the newline ending "---"
 			r, err := resource.Decode([]byte(doc))
 			if errors.Is(err, resource.ErrEmpty) {
 				continue
 			}
 			if err != nil {
-				errs = append(errs, fmt.Errorf("templates/%s: %w", o.Path, err))
+				where := "templates/" + o.Path
+				if len(docs) > 1 {
+					where += fmt.Sprintf(" (document %d, from line %d of the rendered output; see karga template)", i+1, start+leadingBlank(doc))
+				}
+				errs = append(errs, fmt.Errorf("%s: %w", where, err))
 				continue
 			}
 			m.Documents = append(m.Documents, Document{Source: o.Path, Content: strings.TrimSpace(doc), Resource: r})
@@ -111,6 +131,37 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// leadingBlank counts the empty lines a document starts with.
+func leadingBlank(doc string) int {
+	n := 0
+	for strings.HasPrefix(doc, "\n") {
+		doc, n = doc[1:], n+1
+	}
+	return n
+}
+
+// notesTemplate is the name NOTES.txt is rendered under, next to the templates.
+const notesTemplate = "../" + notesFile
+
+// redactValues replaces the values at secret paths that occur in s.
+func redactValues(s string, vals map[string]any, paths [][]string) string {
+	for _, p := range paths {
+		var cur any = vals
+		for _, k := range p {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				cur = nil
+				break
+			}
+			cur = m[k]
+		}
+		if v, ok := cur.(string); ok && v != "" {
+			s = strings.ReplaceAll(s, v, redacted)
+		}
+	}
+	return s
 }
 
 // Overrides stacks the user-supplied values of opts, keeping nulls so they delete defaults later.

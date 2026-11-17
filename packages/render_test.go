@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hasankaradmir/karga/internal/domain/pkg"
 	"github.com/hasankaradmir/karga/internal/domain/resource"
 )
 
@@ -157,5 +158,29 @@ func TestRenderOverrides(t *testing.T) {
 	}
 	if len(m.Resources()) != len(m.Documents) {
 		t.Fatal("Resources length")
+	}
+}
+
+func TestRenderErrorSaysWhichDocument(t *testing.T) {
+	p := &pkg.Package{Metadata: pkg.Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: pkg.Runtime{Supported: []string{"docker"}}}, Values: map[string]any{},
+		Templates: map[string][]byte{"all.yaml": []byte("apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: n}\n---\napiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, bogus: 1}\n")}}
+	_, err := Render(p, Options{ReleaseName: "r"})
+	if err == nil || !strings.Contains(err.Error(), "templates/all.yaml (document 2, from line 5 of the rendered output") || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("want the document and line, got %v", err)
+	}
+}
+
+func TestNotesRenderedAndRedacted(t *testing.T) {
+	p := &pkg.Package{Metadata: pkg.Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: pkg.Runtime{Supported: []string{"docker"}}},
+		Values:    map[string]any{"password": "s3cret", "port": 8080},
+		Schema:    []byte(`{"type":"object","properties":{"password":{"type":"string","writeOnly":true},"port":{"type":"integer"}}}`),
+		Notes:     []byte("{{ .Release.Name }} on {{ .Values.port }} with {{ .Values.password }}\n"),
+		Templates: map[string][]byte{"n.yaml": []byte("apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: n}\n")}}
+	m, err := Render(p, Options{ReleaseName: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Notes != "r on 8080 with <redacted>" {
+		t.Fatalf("notes: %q", m.Notes)
 	}
 }
