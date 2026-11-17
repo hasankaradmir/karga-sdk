@@ -7,8 +7,11 @@ import (
 	"net"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/hasankaradmir/karga/internal/domain/pkg"
 )
 
 // WorkloadSpec runs one container (tech design §6.1). Replicas are intentionally unsupported.
@@ -79,9 +82,38 @@ type Route struct {
 	Host string `json:"host"`
 	// Path is a prefix; it defaults to "/".
 	Path string `json:"path,omitempty"`
-	// HostPort defaults to 80, HostIP to 127.0.0.1.
+	// HostPort defaults to 80 (443 with TLS), HostIP to 127.0.0.1.
 	HostPort int    `json:"hostPort,omitempty"`
 	HostIP   string `json:"hostIP,omitempty"`
+	// TLS serves the route as HTTPS; plain HTTP on port 80 of the same hostIP redirects to it.
+	TLS *RouteTLS `json:"tls,omitempty"`
+}
+
+// RouteTLS names the Secret holding the certificate chain (tls.crt) and private key (tls.key).
+type RouteTLS struct {
+	Secret string `json:"secret"`
+}
+
+// TLS secret keys.
+const (
+	TLSCertKey = "tls.crt"
+	TLSKeyKey  = "tls.key"
+)
+
+// DefaultTLSRoutePort is the host port of a TLS route without hostPort.
+const DefaultTLSRoutePort = 443
+
+// TLSSecrets returns the Secrets the workload's TLS routes use, without duplicates.
+func (s *WorkloadSpec) TLSSecrets() []string {
+	var out []string
+	for _, p := range s.Ports {
+		for _, r := range p.Routes {
+			if r.TLS != nil && !slices.Contains(out, r.TLS.Secret) {
+				out = append(out, r.TLS.Secret)
+			}
+		}
+	}
+	return out
 }
 
 // Mount attaches exactly one of a Volume, Config or Secret at MountPath. Config and Secret are read-only.
@@ -175,6 +207,9 @@ func (s *WorkloadSpec) setDefaults() {
 			}
 			if r.HostPort == 0 {
 				r.HostPort = DefaultRoutePort
+				if r.TLS != nil {
+					r.HostPort = DefaultTLSRoutePort
+				}
 			}
 			if r.HostIP == "" {
 				r.HostIP = DefaultHostIP
@@ -200,6 +235,7 @@ func (s *WorkloadSpec) validate() error {
 		}
 	}
 	routes := map[string]bool{}
+	tlsOn := map[string]bool{} // listener -> serves TLS
 	for i, p := range s.Ports {
 		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].containerPort: %d out of range 1-65535", i, p.ContainerPort))
@@ -241,6 +277,15 @@ func (s *WorkloadSpec) validate() error {
 				errs = append(errs, fmt.Errorf("%s: duplicate route %s", at, key))
 			}
 			routes[key] = true
+			listener := fmt.Sprintf("%s:%d", r.HostIP, r.HostPort)
+			tls := r.TLS != nil
+			if was, ok := tlsOn[listener]; ok && was != tls {
+				errs = append(errs, fmt.Errorf("%s: %s mixes TLS and plain HTTP routes", at, listener))
+			}
+			tlsOn[listener] = tls
+			if tls && !pkg.IsDNSLabel(r.TLS.Secret) {
+				errs = append(errs, fmt.Errorf("%s.tls.secret: %q must name a Secret", at, r.TLS.Secret))
+			}
 		}
 	}
 	for i, m := range s.Mounts {

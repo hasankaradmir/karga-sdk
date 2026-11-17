@@ -149,6 +149,15 @@ func ValidateSet(rs []Resource) error {
 				errs = append(errs, fmt.Errorf("%s %q: mount %s: %s %q is not defined", KindWorkload, r.Metadata.Name, m.MountPath, kind, name))
 			}
 		}
+		for _, name := range w.TLSSecrets() {
+			sec := secretSpec(rs, name)
+			switch {
+			case sec == nil:
+				errs = append(errs, fmt.Errorf("%s %q: tls secret %q is not defined", KindWorkload, r.Metadata.Name, name))
+			case sec.Values[TLSCertKey] == "" || sec.Values[TLSKeyKey] == "":
+				errs = append(errs, fmt.Errorf("%s %q: tls secret %q needs %s and %s", KindWorkload, r.Metadata.Name, name, TLSCertKey, TLSKeyKey))
+			}
+		}
 		for _, n := range w.Networks {
 			if !seen[KindNetwork][n] {
 				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))
@@ -166,4 +175,13 @@ func ValidateSet(rs []Resource) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func secretSpec(rs []Resource, name string) *SecretSpec {
+	for _, r := range rs {
+		if s, ok := r.Spec.(*SecretSpec); ok && r.Metadata.Name == name {
+			return s
+		}
+	}
+	return nil
 }
