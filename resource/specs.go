@@ -153,7 +153,12 @@ type HealthCheck struct {
 type Resources struct {
 	Memory Quantity `json:"memory,omitempty"`
 	CPU    Quantity `json:"cpu,omitempty"`
+	// Pids caps the number of processes (default DefaultPids; 0 removes the limit).
+	Pids *int64 `json:"pids,omitempty"`
 }
+
+// DefaultPids keeps a fork bomb in one container from exhausting the host.
+const DefaultPids int64 = 1024
 
 // Quantity accepts both YAML numbers (cpu: 1) and strings (memory: 512Mi).
 type Quantity string
@@ -192,6 +197,13 @@ func (s *WorkloadSpec) setDefaults() {
 	}
 	if s.PullPolicy == "" {
 		s.PullPolicy = "if-not-present"
+	}
+	if s.Resources == nil {
+		s.Resources = &Resources{}
+	}
+	if s.Resources.Pids == nil {
+		p := DefaultPids
+		s.Resources.Pids = &p
 	}
 	for i := range s.Ports {
 		if s.Ports[i].Protocol == "" {
@@ -341,6 +353,9 @@ func (s *WorkloadSpec) validate() error {
 			if _, err := ParseCPU(string(r.CPU)); err != nil {
 				errs = append(errs, fmt.Errorf("spec.resources.cpu: %w", err))
 			}
+		}
+		if r.Pids != nil && *r.Pids < 0 {
+			errs = append(errs, fmt.Errorf("spec.resources.pids: %d must be 0 (no limit) or positive", *r.Pids))
 		}
 	}
 	return errors.Join(errs...)
