@@ -22,8 +22,10 @@ type Options struct {
 	Revision int
 	// BaseOverrides are applied before ValueFiles (e.g. values reused from the previous revision).
 	BaseOverrides map[string]any
-	// ValueFiles are applied in order, then Sets, then SetStrings.
+	// ValueFiles are applied in order, then ValueData (values files a client read and sent), then
+	// Sets, then SetStrings.
 	ValueFiles []string
+	ValueData  [][]byte
 	Sets       []string
 	SetStrings []string
 	// Strict rejects values the schema does not declare.
@@ -171,6 +173,13 @@ func Overrides(opts Options) (map[string]any, error) {
 		fv, err := values.LoadFile(f)
 		if err != nil {
 			return nil, err
+		}
+		vals = values.Overlay(vals, fv)
+	}
+	for i, data := range opts.ValueData {
+		fv, err := values.Decode(data)
+		if err != nil {
+			return nil, fmt.Errorf("values file %d: %w", i+1, err)
 		}
 		vals = values.Overlay(vals, fv)
 	}
