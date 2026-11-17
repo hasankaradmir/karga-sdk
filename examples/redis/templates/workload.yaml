@@ -8,12 +8,12 @@ spec:
   command:
     - redis-server
     - /usr/local/etc/redis/redis.conf
-  {{- if .Values.network.enabled }}
+  ports:
+    - name: redis
+      containerPort: 6379
+  {{- if .Values.service.enabled }}
   networks:
     - redis-network
-  ports:
-    - containerPort: 6379
-      hostPort: {{ .Values.network.port }}
   {{- end }}
   mounts:
     - config: redis-config

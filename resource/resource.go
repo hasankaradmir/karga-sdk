@@ -24,6 +24,7 @@ const (
 	KindNetwork  = "Network"
 	KindConfig   = "Config"
 	KindSecret   = "Secret"
+	KindService  = "Service"
 )
 
 // Metadata identifies a resource inside a release.
@@ -32,7 +33,7 @@ type Metadata struct {
 }
 
 // Resource is one decoded manifest document. Spec is one of *WorkloadSpec, *VolumeSpec,
-// *NetworkSpec, *ConfigSpec or *SecretSpec, matching Kind.
+// *NetworkSpec, *ConfigSpec, *SecretSpec or *ServiceSpec, matching Kind.
 type Resource struct {
 	APIVersion string   `json:"apiVersion"`
 	Kind       string   `json:"kind"`
@@ -57,7 +58,11 @@ var newSpec = map[string]func() spec{
 	KindNetwork:  func() spec { return &NetworkSpec{} },
 	KindConfig:   func() spec { return &ConfigSpec{} },
 	KindSecret:   func() spec { return &SecretSpec{} },
+	KindService:  func() spec { return &ServiceSpec{} },
 }
+
+// moved names Workload fields that exposure moved to Services, for a clearer decode error.
+var moved = []string{"hostPort", "hostIP", "routes"}
 
 func kinds() string {
 	ks := make([]string, 0, len(newSpec))
@@ -101,6 +106,12 @@ func Decode(doc []byte) (Resource, error) {
 	r := Resource{APIVersion: h.APIVersion, Kind: h.Kind, Metadata: h.Metadata, Spec: mk()}
 	if len(h.Spec) > 0 && string(h.Spec) != "null" {
 		if err := strictJSON(h.Spec, r.Spec); err != nil {
+			for _, f := range moved {
+				if r.Kind == KindWorkload && strings.Contains(err.Error(), fmt.Sprintf("unknown field %q", f)) {
+					err = fmt.Errorf("%w: a Workload no longer exposes ports; a Service does (see USAGE.md, \"Expose services\")", err)
+					break
+				}
+			}
 			return Resource{}, fmt.Errorf("%s %q: spec: %w", r.Kind, r.Metadata.Name, err)
 		}
 	}
@@ -111,13 +122,40 @@ func Decode(doc []byte) (Resource, error) {
 	return r, nil
 }
 
+// DecodeStored parses a spec karga stored itself (JSON, already validated when it was applied).
+// Fields an older karga wrote and this one no longer knows are ignored, so old state stays readable.
+func DecodeStored(doc []byte) (Resource, error) {
+	var h struct {
+		APIVersion string          `json:"apiVersion"`
+		Kind       string          `json:"kind"`
+		Metadata   Metadata        `json:"metadata"`
+		Spec       json.RawMessage `json:"spec"`
+	}
+	if err := json.Unmarshal(doc, &h); err != nil {
+		return Resource{}, err
+	}
+	mk, ok := newSpec[h.Kind]
+	if !ok {
+		return Resource{}, fmt.Errorf("kind: unknown kind %q", h.Kind)
+	}
+	r := Resource{APIVersion: h.APIVersion, Kind: h.Kind, Metadata: h.Metadata, Spec: mk()}
+	if len(h.Spec) > 0 && string(h.Spec) != "null" {
+		if err := json.Unmarshal(h.Spec, r.Spec); err != nil {
+			return Resource{}, fmt.Errorf("%s %q: spec: %w", r.Kind, r.Metadata.Name, err)
+		}
+	}
+	r.Spec.setDefaults()
+	return r, nil
+}
+
 func strictJSON(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }
 
-// ValidateSet checks rules that span resources: names, uniqueness, references and host ports.
+// ValidateSet checks rules that span resources: names, uniqueness, references, and the ports and
+// exposures of Services.
 func ValidateSet(rs []Resource) error {
 	var errs []error
 	seen := map[string]map[string]bool{}
@@ -137,25 +175,17 @@ func ValidateSet(rs []Resource) error {
 		seen[r.Kind][r.Metadata.Name] = true
 	}
 
-	hostPorts := map[string]string{}
+	workloads := map[string]*WorkloadSpec{}
 	for _, r := range rs {
 		w, ok := r.Spec.(*WorkloadSpec)
 		if !ok {
 			continue
 		}
+		workloads[r.Metadata.Name] = w
 		for _, m := range w.Mounts {
 			kind, name := m.Target()
 			if !seen[kind][name] {
 				errs = append(errs, fmt.Errorf("%s %q: mount %s: %s %q is not defined", KindWorkload, r.Metadata.Name, m.MountPath, kind, name))
-			}
-		}
-		for _, name := range w.TLSSecrets() {
-			sec := secretSpec(rs, name)
-			switch {
-			case sec == nil:
-				errs = append(errs, fmt.Errorf("%s %q: tls secret %q is not defined", KindWorkload, r.Metadata.Name, name))
-			case sec.Values[TLSCertKey] == "" || sec.Values[TLSKeyKey] == "":
-				errs = append(errs, fmt.Errorf("%s %q: tls secret %q needs %s and %s", KindWorkload, r.Metadata.Name, name, TLSCertKey, TLSKeyKey))
 			}
 		}
 		for _, n := range w.Networks {
@@ -163,15 +193,52 @@ func ValidateSet(rs []Resource) error {
 				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))
 			}
 		}
-		for _, p := range w.Ports {
-			if p.HostPort == 0 {
-				continue
+	}
+
+	// One release proxy serves every Service of the release on one address, so a port number
+	// belongs to one Service; a listener's host and path belong to one Service too.
+	ports, exposed := map[int]string{}, map[string]string{}
+	for _, r := range rs {
+		s, ok := r.Spec.(*ServiceSpec)
+		if !ok {
+			continue
+		}
+		at := fmt.Sprintf("%s %q", KindService, r.Metadata.Name)
+		w := workloads[s.Workload]
+		switch {
+		case w == nil:
+			errs = append(errs, fmt.Errorf("%s: workload %q is not defined", at, s.Workload))
+		case len(w.Networks) == 0:
+			errs = append(errs, fmt.Errorf("%s: workload %q joins no network, so the release proxy cannot reach it", at, s.Workload))
+		}
+		for _, p := range s.Ports {
+			if w != nil {
+				if wp, ok := w.PortNamed(p.TargetPort); !ok {
+					errs = append(errs, fmt.Errorf("%s: port %s: targetPort %q is not a port of workload %q", at, p.Name, p.TargetPort, s.Workload))
+				} else if wp.Protocol != "tcp" {
+					errs = append(errs, fmt.Errorf("%s: port %s: targetPort %q is %s; services carry tcp only", at, p.Name, p.TargetPort, wp.Protocol))
+				}
 			}
-			key := fmt.Sprintf("%d/%s", p.HostPort, p.Protocol)
-			if other, dup := hostPorts[key]; dup {
-				errs = append(errs, fmt.Errorf("%s %q: hostPort %s is already used by %s %q", KindWorkload, r.Metadata.Name, key, KindWorkload, other))
+			if other, dup := ports[p.Port]; dup {
+				errs = append(errs, fmt.Errorf("%s: port %d is already used by %s %q (one release proxy serves every service of the release)", at, p.Port, KindService, other))
 			}
-			hostPorts[key] = r.Metadata.Name
+			ports[p.Port] = r.Metadata.Name
+		}
+		for _, e := range s.Expose {
+			key := e.Listener + " " + e.Host + e.Path
+			if other, dup := exposed[key]; dup && other != r.Metadata.Name {
+				errs = append(errs, fmt.Errorf("%s: listener %s %s is already used by %s %q", at, e.Listener, e.Host+e.Path, KindService, other))
+			}
+			exposed[key] = r.Metadata.Name
+		}
+		for _, name := range s.TLSSecrets() {
+			sec := secretSpec(rs, name)
+			switch {
+			case sec == nil:
+				errs = append(errs, fmt.Errorf("%s: tls secret %q is not defined", at, name))
+			case sec.Values[TLSCertKey] == "" || sec.Values[TLSKeyKey] == "":
+				errs = append(errs, fmt.Errorf("%s: tls secret %q needs %s and %s", at, name, TLSCertKey, TLSKeyKey))
+			}
 		}
 	}
 	return errors.Join(errs...)

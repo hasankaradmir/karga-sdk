@@ -12,5 +12,7 @@ karga template my-db examples/postgres --set database.password=change-me
 | `database.password` | — | **Required.** Superuser password |
 | `database.name` | `app` | Database created on first start |
 | `database.user` | `app` | Superuser name |
-| `network.port` | `5432` | Host port |
+| `service.enabled` | `true` | A Service `postgres` on the release network, how other workloads reach PostgreSQL |
+| `service.port` | `5432` | Service port |
+| `service.listener` | — | Expose PostgreSQL on this tcp gateway listener (the host's administrator adds it) |
 | `storage.enabled` | `true` | Keep the data directory on a volume (retained on uninstall) |

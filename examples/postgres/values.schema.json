@@ -18,11 +18,12 @@
       },
       "required": ["name", "user"]
     },
-    "network": {
+    "service": {
       "type": "object",
       "properties": {
         "enabled": {"type": "boolean"},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "listener": {"type": "string"}
       }
     },
     "storage": {

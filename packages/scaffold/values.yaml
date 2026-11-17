@@ -3,13 +3,14 @@ image:
   repository: nginx
   tag: 1.27-alpine
 
-# Host port the service is published on (127.0.0.1 unless hostIP says otherwise).
+# The Service other workloads of the release reach the web server on, as web:<port>.
 service:
-  port: 8080
-  hostIP: 127.0.0.1
+  port: 80
 
-# Optional HTTP route on the host gateway (Linux): e.g. host: app.local
-route:
+# Expose the service on the host gateway: a listener the host's administrator defined (karga
+# gateway listener list) and a host name. An empty host exposes nothing.
+expose:
+  listener: web
   host: ""
 
 resources:

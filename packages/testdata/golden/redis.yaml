@@ -20,6 +20,18 @@ metadata:
 spec:
   driver: bridge
 ---
+# Source: redis/templates/service.yaml
+# Other workloads of the release reach Redis as redis:6379.
+apiVersion: karga.io/v1alpha1
+kind: Service
+metadata:
+  name: redis
+spec:
+  workload: redis
+  ports:
+    - name: redis
+      port: 6379
+---
 # Source: redis/templates/volume.yaml
 apiVersion: karga.io/v1alpha1
 kind: Volume
@@ -40,11 +52,11 @@ spec:
   command:
     - redis-server
     - /usr/local/etc/redis/redis.conf
+  ports:
+    - name: redis
+      containerPort: 6379
   networks:
     - redis-network
-  ports:
-    - containerPort: 6379
-      hostPort: 6379
   mounts:
     - config: redis-config
       mountPath: /usr/local/etc/redis

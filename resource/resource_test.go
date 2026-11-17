@@ -2,6 +2,7 @@ package resource
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,8 +19,8 @@ spec:
   environment:
     REDIS_MAXMEMORY: 256mb
   ports:
-    - containerPort: 6379
-      hostPort: 6379
+    - name: redis
+      containerPort: 6379
   mounts:
     - volume: redis-data
       mountPath: /data
@@ -46,7 +47,7 @@ func TestDecodeWorkload(t *testing.T) {
 	if r.Kind != KindWorkload || r.Metadata.Name != "redis" || w.Image != "redis:7.4" {
 		t.Fatalf("unexpected: %+v %+v", r, w)
 	}
-	if w.RestartPolicy != "always" || w.PullPolicy != "if-not-present" || w.Ports[0].Protocol != "tcp" || w.Ports[0].HostIP != "127.0.0.1" {
+	if w.RestartPolicy != "always" || w.PullPolicy != "if-not-present" || w.Ports[0].Protocol != "tcp" {
 		t.Fatalf("defaults not applied: %+v", w)
 	}
 	if w.Resources.CPU != "1" || w.Resources.Memory != "512Mi" || w.Resources.Pids == nil || *w.Resources.Pids != DefaultPids ||
@@ -70,26 +71,33 @@ func TestDecodeDefaults(t *testing.T) {
 	if n.Spec.(*NetworkSpec).Driver != "bridge" {
 		t.Fatalf("network defaults: %+v", n.Spec)
 	}
-	w, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 3000, routes: [{host: app.local}]}]}\n"))
+	sv, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Service\nmetadata: {name: s}\nspec: {workload: w, ports: [{name: http, port: 80}], expose: [{port: http, listener: web, host: app.local}]}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := w.Spec.(*WorkloadSpec).Ports[0].Routes[0]; got != (Route{Host: "app.local", Path: "/", HostPort: 80, HostIP: "127.0.0.1"}) {
-		t.Fatalf("route defaults: %+v", got)
+	if got := sv.Spec.(*ServiceSpec); got.Ports[0].TargetPort != "http" || got.Expose[0].Path != "/" {
+		t.Fatalf("service defaults: %+v", got)
 	}
-	hw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 53, protocol: udp}, {containerPort: 8080}], healthCheck: {type: http}}\n"))
+	hw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{name: dns, containerPort: 53, protocol: udp}, {name: http, containerPort: 8080}], healthCheck: {type: http}}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hc := hw.Spec.(*WorkloadSpec).HealthCheck; hc.Port != 8080 || hc.Path != "/" {
 		t.Fatalf("http healthcheck defaults: %+v", hc)
 	}
-	tw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{containerPort: 3000, routes: [{host: app.local, tls: {secret: c}}]}]}\n"))
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestDecodeMovedFields(t *testing.T) {
+	for _, f := range []string{"hostPort: 80", "hostIP: 0.0.0.0", "routes: [{host: a}]"} {
+		_, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{name: http, containerPort: 80, " + f + "}]}\n"))
+		if err == nil || !strings.Contains(err.Error(), "a Service does") {
+			t.Errorf("%s: %v", f, err)
+		}
 	}
-	if got := tw.Spec.(*WorkloadSpec).Ports[0].Routes[0].HostPort; got != 443 {
-		t.Fatalf("tls route default port: %d", got)
+	// What karga stored before still reads.
+	r, err := DecodeStored([]byte(`{"apiVersion":"karga.io/v1alpha1","kind":"Workload","metadata":{"name":"w"},"spec":{"image":"a","ports":[{"containerPort":80,"hostPort":80,"hostIP":"127.0.0.1"}]}}`))
+	if err != nil || r.Spec.(*WorkloadSpec).Ports[0].ContainerPort != 80 {
+		t.Fatalf("stored: %+v %v", r, err)
 	}
 }
 
@@ -112,7 +120,6 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {}\n", "spec.image is required"},
 		{head + "kind: Workload\nspec: {image: a, restartPolicy: no}\n", "restartPolicy"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 0}]}\n", "containerPort"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 70000}]}\n", "hostPort"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: sctp}]}\n", "protocol"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
@@ -121,24 +128,24 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, stopTimeout: 500ms}\n", "stopTimeout"},
 		{head + "kind: Workload\nspec: {image: a, stopTimeout: 2h}\n", "stopTimeout"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: replace, proxy: true}}\n", "proxy"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 80, routes: [{host: a.local}]}]}\n", "exclusive"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: udp, routes: [{host: a.local}]}]}\n", "require protocol tcp"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: A_b}]}]}\n", "host name"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, path: api}]}]}\n", "must start with /"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, hostPort: 70000}]}]}\n", "routes[0].hostPort"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, hostIP: x}]}]}\n", "routes[0].hostIP"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a}]}, {containerPort: 2, routes: [{host: a, path: /}]}]}\n", "duplicate route"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, tls: {secret: Bad_Name}}]}]}\n", "must name a Secret"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, routes: [{host: a, hostPort: 8443, tls: {secret: c}}, {host: b, hostPort: 8443}]}]}\n", "mixes TLS and plain"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 1, hostIP: localhost}]}\n", "hostIP"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostIP: 0.0.0.0}]}\n", "requires hostPort"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1}]}\n", "ports[0].name"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{name: a, containerPort: 1}, {name: a, containerPort: 2}]}\n", "used twice"},
+		{head + "kind: Service\nspec: {workload: w}\n", "at least one port"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 70000}]}\n", "port: 70000 out of range"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}, {name: b, port: 1}]}\n", "1 is used twice"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: b, listener: web}]}\n", "not a port of the service"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: A_b}]}\n", "host name"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: api}]}\n", "must start with /"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: pg, tls: {secret: c}}]}\n", "need a host"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, tls: {secret: Bad_Name}}]}\n", "must name a Secret"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a}, {port: a, listener: web, host: a}]}\n", "already serves"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, mountPath: data}]}\n", "absolute"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: grpc}}\n", "healthCheck.type"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: tcp}}\n", "healthCheck.port"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: http, port: 81}}\n", "healthCheck.port"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: tcp, command: [x]}}\n", "not used by type tcp"},
-		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 80}], healthCheck: {type: http, path: health}}\n", "must start with /"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{name: http, containerPort: 80}], healthCheck: {type: http, port: 81}}\n", "healthCheck.port"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{name: http, containerPort: 80}], healthCheck: {type: tcp, command: [x]}}\n", "not used by type tcp"},
+		{head + "kind: Workload\nspec: {image: a, ports: [{name: http, containerPort: 80}], healthCheck: {type: http, path: health}}\n", "must start with /"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec}}\n", "healthCheck.command"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], interval: 10}}\n", "interval"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: exec, command: [x], startPeriod: soon}}\n", "startPeriod"},
@@ -174,6 +181,7 @@ func mustDecode(t *testing.T, doc string) Resource {
 
 func TestValidateSet(t *testing.T) {
 	vol := mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Volume\nmetadata: {name: redis-data}\n")
+	net := mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: n}\n")
 	w := mustDecode(t, workloadDoc)
 	if err := ValidateSet([]Resource{vol, w}); err != nil {
 		t.Fatalf("valid set: %v", err)
@@ -189,16 +197,27 @@ func TestValidateSet(t *testing.T) {
 		{"duplicate", []Resource{vol, vol, w}, "defined more than once"},
 		{"bad name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: Bad_Name}\n")}, "DNS label"},
 		{"reserved name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: karga-net}\n")}, "reserved for karga"},
-		{"host port clash", []Resource{vol, w, renamed(w, "redis2")}, "hostPort 6379/tcp is already used"},
-		{"missing tls secret", []Resource{vol, withTLS(w, "cert")}, `tls secret "cert" is not defined`},
-		{"tls secret without key", []Resource{vol, withTLS(w, "cert"),
+		{"service without workload", []Resource{vol, w, service(t, "s", "nope", 80, "redis", "")}, `workload "nope" is not defined`},
+		{"service off network", []Resource{vol, w, service(t, "s", "redis", 80, "redis", "")}, "joins no network"},
+		{"unknown target port", []Resource{vol, net, withNetwork(w, "n"), service(t, "s", "redis", 80, "web", "")}, `targetPort "web" is not a port`},
+		{"target port by number", nil, ""},
+		{"service port clash", []Resource{vol, net, withNetwork(w, "n"), service(t, "a", "redis", 80, "redis", ""), service(t, "b", "redis", 80, "redis", "")}, `port 80 is already used by Service "a"`},
+		{"exposure clash", []Resource{vol, net, withNetwork(w, "n"), service(t, "a", "redis", 80, "redis", "pg"), service(t, "b", "redis", 81, "redis", "pg")}, `listener pg  is already used by Service "a"`},
+		{"missing tls secret", []Resource{vol, net, withNetwork(w, "n"), withTLS(t, "cert")}, `tls secret "cert" is not defined`},
+		{"tls secret without key", []Resource{vol, net, withNetwork(w, "n"), withTLS(t, "cert"),
 			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Secret\nmetadata: {name: cert}\nspec: {values: {tls.crt: x}}\n"),
 		}, "needs tls.crt and tls.key"},
 		{"config is not a volume", []Resource{
 			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Config\nmetadata: {name: redis-data}\nspec: {files: {a: b}}\n"), w,
 		}, `Volume "redis-data" is not defined`},
 	}
+	if err := ValidateSet([]Resource{vol, net, withNetwork(w, "n"), service(t, "s", "redis", 80, "6379", "")}); err != nil {
+		t.Fatalf("target port by number: %v", err)
+	}
 	for _, tt := range tests {
+		if tt.rs == nil {
+			continue
+		}
 		err := ValidateSet(tt.rs)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: want error containing %q, got %v", tt.name, tt.want, err)
@@ -206,22 +225,25 @@ func TestValidateSet(t *testing.T) {
 	}
 }
 
-func withTLS(r Resource, secret string) Resource {
-	w := *r.Spec.(*WorkloadSpec)
-	w.Ports = []Port{{ContainerPort: 80, Protocol: "tcp", Routes: []Route{{Host: "a.example", Path: "/", HostPort: 443, HostIP: "127.0.0.1", TLS: &RouteTLS{Secret: secret}}}}}
-	r.Spec = &w
-	return r
+// service is a Service for workload with one port; listener exposes it as tcp.
+func service(t *testing.T, name, workload string, port int, target, listener string) Resource {
+	t.Helper()
+	doc := fmt.Sprintf("apiVersion: karga.io/v1alpha1\nkind: Service\nmetadata: {name: %s}\nspec: {workload: %s, ports: [{name: p, port: %d, targetPort: %q}]", name, workload, port, target)
+	if listener != "" {
+		doc += fmt.Sprintf(", expose: [{port: p, listener: %s}]", listener)
+	}
+	return mustDecode(t, doc+"}\n")
+}
+
+func withTLS(t *testing.T, secret string) Resource {
+	t.Helper()
+	return mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Service\nmetadata: {name: s}\nspec: {workload: redis, ports: [{name: p, port: 443, targetPort: redis}], expose: [{port: p, listener: websecure, host: a.example, tls: {secret: "+secret+"}}]}\n")
 }
 
 func withNetwork(r Resource, n string) Resource {
 	w := *r.Spec.(*WorkloadSpec)
 	w.Networks = []string{n}
 	r.Spec = &w
-	return r
-}
-
-func renamed(r Resource, name string) Resource {
-	r.Metadata.Name = name
 	return r
 }
 

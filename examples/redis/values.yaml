@@ -6,10 +6,13 @@ workload:
   # always | on-failure | unless-stopped | never
   restartPolicy: always
 
-network:
+service:
+  # A Service named redis on the release network: how other workloads reach it.
   enabled: true
-  # Host port Redis is published on.
   port: 6379
+  # Expose it through the host gateway on this tcp listener, which the host's administrator adds
+  # (karga gateway listener add redis --port 6379 --protocol tcp). Empty: not exposed.
+  listener: ""
 
 storage:
   enabled: true

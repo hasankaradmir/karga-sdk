@@ -12,13 +12,15 @@
     "service": {
       "type": "object",
       "properties": {
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "hostIP": {"type": "string"}
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       }
     },
-    "route": {
+    "expose": {
       "type": "object",
-      "properties": {"host": {"type": "string"}}
+      "properties": {
+        "listener": {"type": "string", "minLength": 1},
+        "host": {"type": "string"}
+      }
     },
     "resources": {
       "type": "object",

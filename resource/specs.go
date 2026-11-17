@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,55 +90,23 @@ func (s *WorkloadSpec) Strategy() (string, time.Duration) {
 	return typ, drain
 }
 
-// Port publishes a container port, optionally on the host.
+// Port declares a port the container listens on. It is reachable only through a Service; nothing
+// is published on the host.
 type Port struct {
-	ContainerPort int `json:"containerPort"`
-	HostPort      int `json:"hostPort,omitempty"`
-	// HostIP is the host address a hostPort binds to. Defaults to 127.0.0.1 so nothing is exposed by accident.
-	HostIP   string `json:"hostIP,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	// Routes serve the port as HTTP on the host gateway, selected by Host header and path prefix.
-	// Several workloads, also of other releases, can share a route's hostPort.
-	Routes []Route `json:"routes,omitempty"`
+	// Name is how a Service's targetPort refers to the port.
+	Name          string `json:"name"`
+	ContainerPort int    `json:"containerPort"`
+	Protocol      string `json:"protocol,omitempty"`
 }
 
-// Route is an HTTP route on the host gateway (Linux only).
-type Route struct {
-	Host string `json:"host"`
-	// Path is a prefix; it defaults to "/".
-	Path string `json:"path,omitempty"`
-	// HostPort defaults to 80 (443 with TLS), HostIP to 127.0.0.1.
-	HostPort int    `json:"hostPort,omitempty"`
-	HostIP   string `json:"hostIP,omitempty"`
-	// TLS serves the route as HTTPS; plain HTTP on port 80 of the same hostIP redirects to it.
-	TLS *RouteTLS `json:"tls,omitempty"`
-}
-
-// RouteTLS names the Secret holding the certificate chain (tls.crt) and private key (tls.key).
-type RouteTLS struct {
-	Secret string `json:"secret"`
-}
-
-// TLS secret keys.
-const (
-	TLSCertKey = "tls.crt"
-	TLSKeyKey  = "tls.key"
-)
-
-// DefaultTLSRoutePort is the host port of a TLS route without hostPort.
-const DefaultTLSRoutePort = 443
-
-// TLSSecrets returns the Secrets the workload's TLS routes use, without duplicates.
-func (s *WorkloadSpec) TLSSecrets() []string {
-	var out []string
+// PortNamed returns the port called name, or the port whose containerPort is the number in name.
+func (s *WorkloadSpec) PortNamed(name string) (Port, bool) {
 	for _, p := range s.Ports {
-		for _, r := range p.Routes {
-			if r.TLS != nil && !slices.Contains(out, r.TLS.Secret) {
-				out = append(out, r.TLS.Secret)
-			}
+		if p.Name == name || strconv.Itoa(p.ContainerPort) == name {
+			return p, true
 		}
 	}
-	return out
+	return Port{}, false
 }
 
 // Mount attaches exactly one of a Volume, Config or Secret at MountPath. Config and Secret are read-only.
@@ -252,12 +220,6 @@ var (
 	pullPolicies    = map[string]bool{"always": true, "if-not-present": true, "never": true}
 )
 
-// DefaultHostIP is used when a port sets hostPort without hostIP.
-const DefaultHostIP = "127.0.0.1"
-
-// DefaultRoutePort is the host port of a route without hostPort.
-const DefaultRoutePort = 80
-
 var routeHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 func (s *WorkloadSpec) setDefaults() {
@@ -312,24 +274,6 @@ func (s *WorkloadSpec) setDefaults() {
 		if s.Ports[i].Protocol == "" {
 			s.Ports[i].Protocol = "tcp"
 		}
-		if s.Ports[i].HostPort != 0 && s.Ports[i].HostIP == "" {
-			s.Ports[i].HostIP = DefaultHostIP
-		}
-		for j := range s.Ports[i].Routes {
-			r := &s.Ports[i].Routes[j]
-			if r.Path == "" {
-				r.Path = "/"
-			}
-			if r.HostPort == 0 {
-				r.HostPort = DefaultRoutePort
-				if r.TLS != nil {
-					r.HostPort = DefaultTLSRoutePort
-				}
-			}
-			if r.HostIP == "" {
-				r.HostIP = DefaultHostIP
-			}
-		}
 	}
 }
 
@@ -349,58 +293,20 @@ func (s *WorkloadSpec) validate() error {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
 		}
 	}
-	routes := map[string]bool{}
-	tlsOn := map[string]bool{} // listener -> serves TLS
+	names := map[string]bool{}
 	for i, p := range s.Ports {
+		if !pkg.IsDNSLabel(p.Name) {
+			errs = append(errs, fmt.Errorf("spec.ports[%d].name: %q must be a DNS label (a Service refers to the port by it)", i, p.Name))
+		}
+		if names[p.Name] {
+			errs = append(errs, fmt.Errorf("spec.ports[%d].name: %q is used twice", i, p.Name))
+		}
+		names[p.Name] = true
 		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].containerPort: %d out of range 1-65535", i, p.ContainerPort))
 		}
-		if p.HostPort < 0 || p.HostPort > 65535 {
-			errs = append(errs, fmt.Errorf("spec.ports[%d].hostPort: %d out of range 1-65535", i, p.HostPort))
-		}
-		if p.HostIP != "" && net.ParseIP(p.HostIP) == nil {
-			errs = append(errs, fmt.Errorf("spec.ports[%d].hostIP: %q is not an IP address", i, p.HostIP))
-		}
-		if p.HostIP != "" && p.HostPort == 0 {
-			errs = append(errs, fmt.Errorf("spec.ports[%d].hostIP: requires hostPort", i))
-		}
 		if p.Protocol != "tcp" && p.Protocol != "udp" {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].protocol: %q must be tcp or udp", i, p.Protocol))
-		}
-		if len(p.Routes) > 0 && p.HostPort != 0 {
-			errs = append(errs, fmt.Errorf("spec.ports[%d]: hostPort and routes are exclusive (routes set their own hostPort)", i))
-		}
-		if len(p.Routes) > 0 && p.Protocol == "udp" {
-			errs = append(errs, fmt.Errorf("spec.ports[%d].routes: require protocol tcp", i))
-		}
-		for j, r := range p.Routes {
-			at := fmt.Sprintf("spec.ports[%d].routes[%d]", i, j)
-			if !routeHost.MatchString(r.Host) {
-				errs = append(errs, fmt.Errorf("%s.host: %q is not a lowercase host name", at, r.Host))
-			}
-			if !strings.HasPrefix(r.Path, "/") {
-				errs = append(errs, fmt.Errorf("%s.path: %q must start with /", at, r.Path))
-			}
-			if r.HostPort < 1 || r.HostPort > 65535 {
-				errs = append(errs, fmt.Errorf("%s.hostPort: %d out of range 1-65535", at, r.HostPort))
-			}
-			if net.ParseIP(r.HostIP) == nil {
-				errs = append(errs, fmt.Errorf("%s.hostIP: %q is not an IP address", at, r.HostIP))
-			}
-			key := fmt.Sprintf("%s:%d %s%s", r.HostIP, r.HostPort, r.Host, r.Path)
-			if routes[key] {
-				errs = append(errs, fmt.Errorf("%s: duplicate route %s", at, key))
-			}
-			routes[key] = true
-			listener := fmt.Sprintf("%s:%d", r.HostIP, r.HostPort)
-			tls := r.TLS != nil
-			if was, ok := tlsOn[listener]; ok && was != tls {
-				errs = append(errs, fmt.Errorf("%s: %s mixes TLS and plain HTTP routes", at, listener))
-			}
-			tlsOn[listener] = tls
-			if tls && !pkg.IsDNSLabel(r.TLS.Secret) {
-				errs = append(errs, fmt.Errorf("%s.tls.secret: %q must name a Secret", at, r.TLS.Secret))
-			}
 		}
 	}
 	for i, m := range s.Mounts {

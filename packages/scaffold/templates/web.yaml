@@ -10,15 +10,10 @@ metadata:
 spec:
   image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
   networks: [net]
+  # Nothing is published: the Service below is the only way in.
   ports:
-    - containerPort: 80
-      {{- if .Values.route.host }}
-      routes:
-        - host: {{ .Values.route.host }}
-      {{- else }}
-      hostPort: {{ .Values.service.port }}
-      hostIP: {{ .Values.service.hostIP }}
-      {{- end }}
+    - name: http
+      containerPort: 80
   # http: karga checks GET / itself, so the image needs no curl or wget.
   healthCheck:
     type: http
@@ -33,3 +28,22 @@ spec:
   updateStrategy:
     type: replace
     drainTimeout: 10s
+---
+# Other workloads of the release reach the web server as web:{{ .Values.service.port }}.
+apiVersion: karga.io/v1alpha1
+kind: Service
+metadata:
+  name: web
+spec:
+  workload: web
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  {{- if .Values.expose.host }}
+  # Served on the host gateway's listener; the host's administrator decides where it listens.
+  expose:
+    - port: http
+      listener: {{ .Values.expose.listener }}
+      host: {{ .Values.expose.host }}
+  {{- end }}

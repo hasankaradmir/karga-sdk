@@ -42,7 +42,7 @@ func TestRenderDemo(t *testing.T) {
 		t.Fatalf("documents: %s, want %s", got, want)
 	}
 	w := m.Documents[2].Resource.Spec.(*resource.WorkloadSpec)
-	if w.Image != "nginx:1.27" || w.Ports[0].HostPort != 8080 {
+	if w.Image != "nginx:1.27" || w.Ports[0].ContainerPort != 8080 {
 		t.Fatalf("workload: %+v", w)
 	}
 	cfg := m.Documents[1].Resource.Spec.(*resource.ConfigSpec)
@@ -68,7 +68,7 @@ func TestRenderValuePrecedence(t *testing.T) {
 		t.Fatalf("storage.enabled=false from file not applied: %s", got)
 	}
 	w := m.Documents[1].Resource.Spec.(*resource.WorkloadSpec)
-	if w.Image != "nginx:1.28" || w.Ports[0].HostPort != 9100 {
+	if w.Image != "nginx:1.28" || w.Ports[0].ContainerPort != 9100 {
 		t.Fatalf("precedence wrong: %+v", w)
 	}
 }
