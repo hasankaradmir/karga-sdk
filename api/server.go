@@ -12,9 +12,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-sdk/plan"
 )
 
 // Server serves a Backend over HTTP. Errors keep their message; the status code is only a hint.
@@ -24,6 +22,12 @@ type Server struct {
 	mux     *http.ServeMux
 }
 
+// statusOf maps an error to an HTTP status (karga-server sets it with SetStatus).
+var statusOf = func(error) int { return http.StatusBadRequest }
+
+// SetStatus sets how errors map to HTTP status codes; the client only shows their messages.
+func SetStatus(fn func(error) int) { statusOf = fn }
+
 // NewServer serves b; version is reported to clients.
 func NewServer(b Backend, version string) *Server {
 	s := &Server{b: b, version: version, mux: http.NewServeMux()}
@@ -31,7 +35,7 @@ func NewServer(b Backend, version string) *Server {
 		writeJSON(w, versionResponse{Version: s.version})
 	})
 	s.mux.HandleFunc("POST /v1/deploy", s.deploy)
-	s.mux.HandleFunc("POST /v1/uninstall", handle(func(ctx context.Context, req releases.UninstallRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/uninstall", handle(func(ctx context.Context, req UninstallRequest) (any, error) {
 		return struct{}{}, b.Uninstall(ctx, req)
 	}))
 	s.mux.HandleFunc("POST /v1/list", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.List(ctx) }))
@@ -121,20 +125,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func status(err error) int {
-	switch {
-	case errors.Is(err, ports.ErrNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, releases.ErrLocked), errors.Is(err, releases.ErrInterrupted), errors.Is(err, releases.ErrExists),
-		errors.Is(err, ports.ErrPortInUse), errors.Is(err, ports.ErrConflict):
-		return http.StatusConflict
-	}
-	return http.StatusBadRequest
-}
-
 func writeError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status(err))
+	w.WriteHeader(statusOf(err))
 	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
 }
 
@@ -171,11 +164,11 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	progress := func(e deployment.Event) {
+	progress := func(e plan.Event) {
 		send(deployLine{Event: &eventJSON{e.Kind, e.Name, e.Phase, e.Detail}})
 	}
 	ctx := r.Context()
-	var res *releases.Result
+	var res *Result
 	var err error
 	switch {
 	case req.Install != nil:
@@ -218,7 +211,7 @@ func streamed(w http.ResponseWriter, contentType string, fn func(io.Writer) erro
 }
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
-	var req releases.LogsRequest
+	var req LogsRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil {
 		writeError(w, fmt.Errorf("bad request: %w", err))
 		return
@@ -239,14 +232,14 @@ func (s *Server) volumeBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamed(w, "application/gzip", func(out io.Writer) error {
-		return s.b.BackupVolume(r.Context(), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop, W: out})
+		return s.b.BackupVolume(r.Context(), VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop, W: out})
 	})
 }
 
 func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	force, _ := strconv.ParseBool(q.Get("force"))
-	err := s.b.RestoreVolume(r.Context(), releases.VolumeRestoreRequest{
+	err := s.b.RestoreVolume(r.Context(), VolumeRestoreRequest{
 		Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name"), R: r.Body})
 	if err != nil {
 		writeError(w, err)
@@ -288,7 +281,7 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var stdin *io.PipeWriter
-	opts := ports.ExecOptions{Cmd: req.Cmd, TTY: req.TTY, Width: req.Width, Height: req.Height,
+	opts := ExecOptions{Cmd: req.Cmd, TTY: req.TTY, Width: req.Width, Height: req.Height,
 		Stdout: out.stream(frameStdout), Stderr: out.stream(frameStderr)}
 	if req.Stdin {
 		pr, pw := io.Pipe()

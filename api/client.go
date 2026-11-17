@@ -15,14 +15,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-sdk/archive"
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/application/releases"
+	"github.com/hasankaradmir/karga-sdk/plan"
 	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga-sdk/archive"
-	"github.com/hasankaradmir/karga/internal/ports"
 )
 
 // ErrNotRunning is returned when nothing listens on the socket.
@@ -125,7 +122,7 @@ func readValues(opts *packages.Options) error {
 	return nil
 }
 
-func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(deployment.Event)) (*releases.Result, error) {
+func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(plan.Event)) (*Result, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -143,7 +140,7 @@ func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(de
 			return nil, fmt.Errorf("karga-server: %w", err)
 		}
 		if l.Event != nil && progress != nil {
-			progress(deployment.Event{Kind: l.Event.Kind, Name: l.Event.Name, Phase: l.Event.Phase, Detail: l.Event.Detail})
+			progress(plan.Event{Kind: l.Event.Kind, Name: l.Event.Name, Phase: l.Event.Phase, Detail: l.Event.Detail})
 		}
 		if l.Done {
 			if l.Error != "" {
@@ -159,7 +156,7 @@ func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(de
 }
 
 // Install implements Backend.
-func (c *Client) Install(ctx context.Context, req releases.InstallRequest) (*releases.Result, error) {
+func (c *Client) Install(ctx context.Context, req InstallRequest) (*Result, error) {
 	pkg, err := packPackage(req.Package)
 	if err != nil {
 		return nil, err
@@ -173,7 +170,7 @@ func (c *Client) Install(ctx context.Context, req releases.InstallRequest) (*rel
 }
 
 // Upgrade implements Backend.
-func (c *Client) Upgrade(ctx context.Context, req releases.UpgradeRequest) (*releases.Result, error) {
+func (c *Client) Upgrade(ctx context.Context, req UpgradeRequest) (*Result, error) {
 	pkg, err := packPackage(req.Package)
 	if err != nil {
 		return nil, err
@@ -187,14 +184,14 @@ func (c *Client) Upgrade(ctx context.Context, req releases.UpgradeRequest) (*rel
 }
 
 // Rollback implements Backend.
-func (c *Client) Rollback(ctx context.Context, req releases.RollbackRequest) (*releases.Result, error) {
+func (c *Client) Rollback(ctx context.Context, req RollbackRequest) (*Result, error) {
 	progress := req.Progress
 	req.Progress = nil
 	return c.deploy(ctx, deployRequest{Rollback: &req}, progress)
 }
 
 // Uninstall implements Backend.
-func (c *Client) Uninstall(ctx context.Context, req releases.UninstallRequest) error {
+func (c *Client) Uninstall(ctx context.Context, req UninstallRequest) error {
 	return c.call(ctx, "/v1/uninstall", req, nil)
 }
 
@@ -248,14 +245,14 @@ func (c *Client) GetManifest(ctx context.Context, name string, revision int) ([]
 }
 
 // Status implements Backend.
-func (c *Client) Status(ctx context.Context, name string) (*releases.StatusReport, error) {
-	var out releases.StatusReport
+func (c *Client) Status(ctx context.Context, name string) (*StatusReport, error) {
+	var out StatusReport
 	return &out, c.call(ctx, "/v1/status", nameRequest{Name: name}, &out)
 }
 
 // Diff implements Backend.
-func (c *Client) Diff(ctx context.Context, name string, from, to int) (*releases.RevisionDiff, error) {
-	var out releases.RevisionDiff
+func (c *Client) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
+	var out RevisionDiff
 	return &out, c.call(ctx, "/v1/diff", nameRequest{Name: name, From: from, To: to}, &out)
 }
 
@@ -289,17 +286,17 @@ func (c *Client) download(ctx context.Context, path string, in any, w io.Writer)
 }
 
 // Logs implements Backend.
-func (c *Client) Logs(ctx context.Context, req releases.LogsRequest, w io.Writer) error {
+func (c *Client) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 	return c.download(ctx, "/v1/logs", req, w)
 }
 
 // BackupVolume implements Backend.
-func (c *Client) BackupVolume(ctx context.Context, req releases.VolumeBackupRequest) error {
+func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest) error {
 	return c.download(ctx, "/v1/volume/backup", volumeRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, req.W)
 }
 
 // RestoreVolume implements Backend.
-func (c *Client) RestoreVolume(ctx context.Context, req releases.VolumeRestoreRequest) error {
+func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest) error {
 	q := url.Values{"release": {req.Release}, "volume": {req.Volume}, "name": {req.Name}, "force": {strconv.FormatBool(req.Force)}}
 	resp, err := c.post(ctx, "/v1/volume/restore?"+q.Encode(), req.R, http.Header{"Content-Type": {"application/gzip"}})
 	if err != nil {
@@ -314,19 +311,19 @@ func (c *Client) BackupState(ctx context.Context, w io.Writer) error {
 }
 
 // Gateway implements Backend.
-func (c *Client) Gateway(ctx context.Context) ([]gateway.Exposed, error) {
-	var out []gateway.Exposed
+func (c *Client) Gateway(ctx context.Context) ([]Exposed, error) {
+	var out []Exposed
 	return out, c.call(ctx, "/v1/gateway/routes", struct{}{}, &out)
 }
 
 // GatewayHealth implements Backend.
-func (c *Client) GatewayHealth(ctx context.Context) (gateway.State, error) {
-	var out gateway.State
+func (c *Client) GatewayHealth(ctx context.Context) (State, error) {
+	var out State
 	return out, c.call(ctx, "/v1/gateway/health", struct{}{}, &out)
 }
 
 // GatewaySettings implements Backend.
-func (c *Client) GatewaySettings(ctx context.Context) (gateway.Settings, map[string][]string, error) {
+func (c *Client) GatewaySettings(ctx context.Context) (Settings, map[string][]string, error) {
 	var out gatewaySettings
 	err := c.call(ctx, "/v1/gateway/settings", struct{}{}, &out)
 	return out.Settings, out.Users, err
@@ -346,7 +343,7 @@ func (c *Client) SetGatewayListen(ctx context.Context, addrs []string) error {
 }
 
 // AddGatewayListener implements Backend.
-func (c *Client) AddGatewayListener(ctx context.Context, l gateway.Listener) error {
+func (c *Client) AddGatewayListener(ctx context.Context, l Listener) error {
 	return c.call(ctx, "/v1/gateway/change", gatewayChange{Add: &l}, nil)
 }
 
@@ -356,7 +353,7 @@ func (c *Client) RemoveGatewayListener(ctx context.Context, name string) error {
 }
 
 // Exec implements Backend: the connection is upgraded and the streams travel as frames.
-func (c *Client) Exec(ctx context.Context, rel, workload string, opts ports.ExecOptions) (int, error) {
+func (c *Client) Exec(ctx context.Context, rel, workload string, opts ExecOptions) (int, error) {
 	body, err := json.Marshal(execRequest{Release: rel, Workload: workload, Cmd: opts.Cmd, TTY: opts.TTY,
 		Stdin: opts.Stdin != nil, Width: opts.Width, Height: opts.Height})
 	if err != nil {
@@ -421,8 +418,8 @@ func (c *Client) Exec(ctx context.Context, rel, workload string, opts ports.Exec
 }
 
 // Reconcile implements Backend.
-func (c *Client) Reconcile(ctx context.Context, name string, force bool) (*releases.ReconcileResult, error) {
-	var out releases.ReconcileResult
+func (c *Client) Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
+	var out ReconcileResult
 	return &out, c.call(ctx, "/v1/reconcile", nameRequest{Name: name, Force: force}, &out)
 }
 

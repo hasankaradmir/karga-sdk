@@ -12,8 +12,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/hasankaradmir/karga-sdk/pkg"
 	"github.com/hasankaradmir/karga-sdk/archive"
+	"github.com/hasankaradmir/karga-sdk/pkg"
 	"github.com/hasankaradmir/karga-sdk/values"
 )
 

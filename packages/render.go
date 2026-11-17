@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/resource"
 	"github.com/hasankaradmir/karga-sdk/renderer"
+	"github.com/hasankaradmir/karga-sdk/resource"
 	"github.com/hasankaradmir/karga-sdk/values"
 )
 
