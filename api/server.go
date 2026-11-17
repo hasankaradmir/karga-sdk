@@ -35,7 +35,7 @@ func NewServer(b Backend, version string) *Server {
 		writeJSON(w, versionResponse{Version: s.version})
 	})
 	s.mux.HandleFunc("POST /v1/deploy", s.deploy)
-	s.mux.HandleFunc("POST /v1/uninstall", handle(func(ctx context.Context, req UninstallRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/uninstall", mutation(func(ctx context.Context, req UninstallRequest) (any, error) {
 		return struct{}{}, b.Uninstall(ctx, req)
 	}))
 	s.mux.HandleFunc("POST /v1/list", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.List(ctx) }))
@@ -63,10 +63,10 @@ func NewServer(b Backend, version string) *Server {
 	s.mux.HandleFunc("POST /v1/resources", handle(func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Resources(ctx, req.Name)
 	}))
-	s.mux.HandleFunc("POST /v1/reconcile", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/reconcile", mutation(func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Reconcile(ctx, req.Name, req.Force)
 	}))
-	s.mux.HandleFunc("POST /v1/pause", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/pause", mutation(func(ctx context.Context, req nameRequest) (any, error) {
 		return struct{}{}, b.Pause(ctx, req.Name, req.Paused)
 	}))
 	s.mux.HandleFunc("POST /v1/events", handle(func(ctx context.Context, req nameRequest) (any, error) {
@@ -78,7 +78,7 @@ func NewServer(b Backend, version string) *Server {
 		settings, users, err := b.GatewaySettings(ctx)
 		return gatewaySettings{settings, users}, err
 	}))
-	s.mux.HandleFunc("POST /v1/gateway/change", handle(func(ctx context.Context, req gatewayChange) (any, error) {
+	s.mux.HandleFunc("POST /v1/gateway/change", mutation(func(ctx context.Context, req gatewayChange) (any, error) {
 		switch {
 		case req.AccessLog != nil:
 			return struct{}{}, b.SetGatewayAccessLog(ctx, *req.AccessLog)
@@ -103,6 +103,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 
 // maxRequest bounds request bodies other than volume restores (a package archive is the largest).
 const maxRequest = 64 << 20
+
+// mutation is handle for requests that change something: they go on to the end when the client
+// goes away (Ctrl-C, a broken connection), so nothing is left half done because of the client.
+func mutation[Req any](fn func(context.Context, Req) (any, error)) http.HandlerFunc {
+	return handle(func(ctx context.Context, req Req) (any, error) { return fn(context.WithoutCancel(ctx), req) })
+}
 
 func handle[Req any](fn func(context.Context, Req) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +173,8 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	progress := func(e plan.Event) {
 		send(deployLine{Event: &eventJSON{e.Kind, e.Name, e.Phase, e.Detail}})
 	}
-	ctx := r.Context()
+	// The operation goes on if the client goes away; only its progress reports are lost.
+	ctx := context.WithoutCancel(r.Context())
 	var res *Result
 	var err error
 	switch {

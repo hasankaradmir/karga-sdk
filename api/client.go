@@ -122,15 +122,29 @@ func readValues(opts *packages.Options) error {
 	return nil
 }
 
-func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(plan.Event)) (*Result, error) {
+func (c *Client) deploy(ctx context.Context, name string, req deployRequest, progress func(plan.Event)) (*Result, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
+	var res *Result
 	resp, err := c.post(ctx, "/v1/deploy", bytes.NewReader(body), nil)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		res, err = c.follow(ctx, resp, progress)
 	}
+	switch {
+	case ctx.Err() != nil && !errors.Is(err, ErrNotRunning):
+		return nil, fmt.Errorf("%w: once sent, the operation goes on in karga-server; follow it with 'karga events -f %s'", ctx.Err(), name)
+	case errors.Is(err, errDisconnected):
+		return nil, fmt.Errorf("%w; karga-server finishes it when it runs again: see 'karga events %s'", err, name)
+	}
+	return res, err
+}
+
+var errDisconnected = errors.New("karga-server closed the connection before the operation ended")
+
+// follow reads the progress lines of a deploy response until its outcome.
+func (c *Client) follow(_ context.Context, resp *http.Response, progress func(plan.Event)) (*Result, error) {
 	defer func() { _ = resp.Body.Close() }()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
@@ -149,10 +163,10 @@ func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(pl
 			return l.Result, nil
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+	if err := sc.Err(); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, fmt.Errorf("%w: %w", errDisconnected, err)
 	}
-	return nil, errors.New("karga-server closed the connection before the operation ended")
+	return nil, errDisconnected
 }
 
 // Install implements Backend.
@@ -166,7 +180,7 @@ func (c *Client) Install(ctx context.Context, req InstallRequest) (*Result, erro
 	}
 	progress := req.Progress
 	req.Progress, req.Package = nil, ""
-	return c.deploy(ctx, deployRequest{Install: &req, Package: pkg}, progress)
+	return c.deploy(ctx, req.Name, deployRequest{Install: &req, Package: pkg}, progress)
 }
 
 // Upgrade implements Backend.
@@ -180,14 +194,14 @@ func (c *Client) Upgrade(ctx context.Context, req UpgradeRequest) (*Result, erro
 	}
 	progress := req.Progress
 	req.Progress, req.Package = nil, ""
-	return c.deploy(ctx, deployRequest{Upgrade: &req, Package: pkg}, progress)
+	return c.deploy(ctx, req.Name, deployRequest{Upgrade: &req, Package: pkg}, progress)
 }
 
 // Rollback implements Backend.
 func (c *Client) Rollback(ctx context.Context, req RollbackRequest) (*Result, error) {
 	progress := req.Progress
 	req.Progress = nil
-	return c.deploy(ctx, deployRequest{Rollback: &req}, progress)
+	return c.deploy(ctx, req.Name, deployRequest{Rollback: &req}, progress)
 }
 
 // Uninstall implements Backend.
