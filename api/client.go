@@ -49,6 +49,7 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 	for k, v := range header {
 		req.Header[k] = v
 	}
+	req.Header.Set(apiHeader, strconv.Itoa(Major))
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		var op *net.OpError
@@ -87,10 +88,10 @@ func (c *Client) call(ctx context.Context, path string, in, out any) error {
 }
 
 // Version returns the server's version.
-func (c *Client) Version(ctx context.Context) (string, error) {
-	var v versionResponse
+func (c *Client) Version(ctx context.Context) (ServerVersion, error) {
+	var v ServerVersion
 	err := c.call(ctx, "/v1/version", struct{}{}, &v)
-	return v.Version, err
+	return v, err
 }
 
 // packPackage reads a package directory or archive for the server.

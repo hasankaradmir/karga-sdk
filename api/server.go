@@ -32,7 +32,7 @@ func SetStatus(fn func(error) int) { statusOf = fn }
 func NewServer(b Backend, version string) *Server {
 	s := &Server{b: b, version: version, mux: http.NewServeMux()}
 	s.mux.HandleFunc("POST /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, versionResponse{Version: s.version})
+		writeJSON(w, ServerVersion{Version: s.version, API: Major})
 	})
 	s.mux.HandleFunc("POST /v1/deploy", s.deploy)
 	s.mux.HandleFunc("POST /v1/uninstall", mutation(func(ctx context.Context, req UninstallRequest) (any, error) {
@@ -99,7 +99,26 @@ func NewServer(b Backend, version string) *Server {
 }
 
 // ServeHTTP implements http.Handler.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// ServeHTTP refuses requests of another API version; /v1/version answers every client.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if got := r.Header.Get(apiHeader); got != strconv.Itoa(Major) && r.URL.Path != "/v1/version" {
+		writeError(w, apiMismatch(got))
+		return
+	}
+	s.mux.ServeHTTP(w, r)
+}
+
+func apiMismatch(client string) error {
+	n, _ := strconv.Atoi(client)
+	upgrade := "karga"
+	if n > Major {
+		upgrade = "karga-server"
+	}
+	if client == "" {
+		client = "none"
+	}
+	return fmt.Errorf("karga speaks API %s, karga-server API %d: upgrade %s", client, Major, upgrade)
+}
 
 // maxRequest bounds request bodies other than volume restores (a package archive is the largest).
 const maxRequest = 64 << 20

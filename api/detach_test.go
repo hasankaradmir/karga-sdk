@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -65,5 +66,37 @@ func TestOperationOutlivesTheClient(t *testing.T) {
 	close(b.finish)
 	if <-b.canceled {
 		t.Fatal("the server canceled the operation when the client went away")
+	}
+}
+
+func TestAPIVersionContract(t *testing.T) {
+	sock := serve(t, &slow{})
+	v, err := NewClient(sock).Version(context.Background())
+	if err != nil || v.API != Major || v.Version != "dev" {
+		t.Fatalf("version: %+v %v", v, err)
+	}
+	post := func(api string) (int, string) {
+		t.Helper()
+		hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		}}}
+		req, _ := http.NewRequest(http.MethodPost, "http://karga/v1/list", strings.NewReader("{}"))
+		if api != "" {
+			req.Header.Set(apiHeader, api)
+		}
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var e errorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&e)
+		return resp.StatusCode, e.Error
+	}
+	if code, msg := post("2"); code != http.StatusBadRequest || msg != "karga speaks API 2, karga-server API 1: upgrade karga-server" {
+		t.Fatalf("newer client: %d %q", code, msg)
+	}
+	if code, msg := post(""); code != http.StatusBadRequest || !strings.HasSuffix(msg, "upgrade karga") {
+		t.Fatalf("client without a version: %d %q", code, msg)
 	}
 }

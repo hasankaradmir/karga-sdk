@@ -111,13 +111,15 @@ const (
 
 // Operation records a mutating command so an interrupted one can be detected (tech design §14.3).
 type Operation struct {
-	ID         int64
-	Release    string
-	Type       string
-	Revision   int
-	Status     OperationStatus
-	PID        int
-	Hostname   string
+	ID       int64
+	Release  string
+	Type     string
+	Revision int
+	Status   OperationStatus
+	PID      int
+	Hostname string
+	// Actor is who asked for it: a user of the karga CLI, or karga-server (repairs, resumes).
+	Actor      string
 	Steps      []Step
 	Error      string
 	StartedAt  time.Time

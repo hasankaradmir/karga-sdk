@@ -113,9 +113,6 @@ type (
 		ValuesAll map[string]any  `json:"valuesAll"`
 		Manifest  json.RawMessage `json:"manifest"`
 	}
-	versionResponse struct {
-		Version string `json:"version"`
-	}
 	errorResponse struct {
 		Error string `json:"error"`
 	}
@@ -123,3 +120,15 @@ type (
 
 // trailerError carries an error that happened after a streamed response started.
 const trailerError = "X-Karga-Error"
+
+// Major is the API version. A karga CLI and a karga-server work together when their Major is the
+// same, whatever their release versions; the client sends it on every request.
+const Major = 1
+
+const apiHeader = "Karga-Api"
+
+// ServerVersion is what karga-server reports about itself.
+type ServerVersion struct {
+	Version string `json:"version"`
+	API     int    `json:"api"`
+}
