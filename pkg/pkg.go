@@ -37,7 +37,7 @@ type Maintainer struct {
 	Email string `yaml:"email,omitempty" json:"email,omitempty"`
 }
 
-// Runtime declares runtime compatibility. It is a claim, not a guarantee (tech design §5.1).
+// Runtime declares runtime compatibility. It is a claim, not a guarantee.
 type Runtime struct {
 	Supported []string `yaml:"supported" json:"supported"`
 }

@@ -1,0 +1,38 @@
+version: "2"
+
+run:
+  build-tags:
+    - integration
+    - e2e
+
+linters:
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # The SDK (domain, package engine, API) is shared by the CLI and the server: it must not
+        # know the runtime or the state database.
+        sdk:
+          files:
+            - "$all"
+          deny:
+            - pkg: github.com/hasankaradmir/karga/
+              desc: the SDK must not depend on the CLI
+            - pkg: github.com/hasankaradmir/karga-server
+              desc: the SDK must not depend on karga-server
+            - pkg: github.com/docker
+              desc: the SDK must not depend on Docker
+            - pkg: github.com/moby
+              desc: the SDK must not depend on Docker
+            - pkg: modernc.org/sqlite
+              desc: the SDK must not depend on SQLite
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/hasankaradmir/karga-sdk

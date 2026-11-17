@@ -151,7 +151,7 @@ type ResourceStatus struct {
 	OOMKilled bool `json:"oomKilled,omitempty"`
 }
 
-// StatusReport is the desired vs actual state of a release (tech design §10.3).
+// StatusReport is the desired vs actual state of a release.
 type StatusReport struct {
 	Release   release.Release  `json:"release"`
 	Resources []ResourceStatus `json:"resources"`

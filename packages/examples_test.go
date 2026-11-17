@@ -61,7 +61,7 @@ func TestExamplesGolden(t *testing.T) {
 			}
 			want, err := os.ReadFile(golden)
 			if err != nil {
-				t.Fatalf("%v (run go test ./internal/application/packages -update)", err)
+				t.Fatalf("%v (run go test ./packages -update)", err)
 			}
 			if !bytes.Equal(got, want) {
 				t.Fatalf("output differs from %s (run with -update if intended)\n--- got:\n%s", golden, got)

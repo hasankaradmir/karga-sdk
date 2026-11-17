@@ -14,7 +14,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
-// WorkloadSpec runs one container (tech design §6.1). Replicas are intentionally unsupported.
+// WorkloadSpec runs one container. Replicas are intentionally unsupported.
 type WorkloadSpec struct {
 	Image         string `json:"image"`
 	RestartPolicy string `json:"restartPolicy,omitempty"`
@@ -48,7 +48,7 @@ type WorkloadSpec struct {
 	AnonymousVolumes []string `json:"-"`
 }
 
-// Update strategies (tech design §11).
+// Update strategies.
 const (
 	StrategyRecreate = "recreate"
 	StrategyReplace  = "replace"
@@ -418,7 +418,7 @@ func (s *WorkloadSpec) validate() error {
 	return errors.Join(errs...)
 }
 
-// VolumeSpec is persistent storage (tech design §6.2).
+// VolumeSpec is persistent storage.
 type VolumeSpec struct {
 	Driver       string   `json:"driver,omitempty"`
 	MountOptions []string `json:"mountOptions,omitempty"`
@@ -442,7 +442,7 @@ func (s *VolumeSpec) validate() error {
 	return nil
 }
 
-// NetworkSpec is a container network (tech design §6.3).
+// NetworkSpec is a container network.
 type NetworkSpec struct {
 	Driver   string `json:"driver,omitempty"`
 	Internal bool   `json:"internal,omitempty"`
@@ -456,7 +456,7 @@ func (s *NetworkSpec) setDefaults() {
 
 func (s *NetworkSpec) validate() error { return nil }
 
-// ConfigSpec holds configuration files mounted read-only (tech design §6.4).
+// ConfigSpec holds configuration files mounted read-only.
 type ConfigSpec struct {
 	Files map[string]string `json:"files"`
 }
@@ -465,7 +465,7 @@ func (s *ConfigSpec) setDefaults() {}
 
 func (s *ConfigSpec) validate() error { return validateFileNames("spec.files", s.Files) }
 
-// SecretSpec holds sensitive values mounted as read-only files (tech design §6.5).
+// SecretSpec holds sensitive values mounted as read-only files.
 type SecretSpec struct {
 	Values map[string]string `json:"values"`
 }

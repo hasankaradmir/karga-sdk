@@ -1,4 +1,4 @@
-// Package release models installed packages, their immutable revisions and operations (tech design §9).
+// Package release models installed packages, their immutable revisions and operations.
 package release
 
 import (
@@ -11,7 +11,7 @@ import (
 // Status is the lifecycle state of a release.
 type Status string
 
-// Release statuses (tech design §9.2).
+// Release statuses.
 const (
 	StatusPending      Status = "pending"
 	StatusDeploying    Status = "deploying"
@@ -109,7 +109,7 @@ const (
 	OperationAborted   OperationStatus = "aborted"
 )
 
-// Operation records a mutating command so an interrupted one can be detected (tech design §14.3).
+// Operation records a mutating command so an interrupted one can be detected.
 type Operation struct {
 	ID       int64
 	Release  string

@@ -77,7 +77,7 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 // clean drops the "<no value>" text/template prints for missing map keys, so optional values render empty.
 func clean(s string) string { return strings.ReplaceAll(s, "<no value>", "") }
 
-// denied lists sprig functions that read the host or are non-deterministic (tech design §5.4, §17.3).
+// denied lists sprig functions that read the host or are non-deterministic.
 var denied = map[string]string{
 	"env": "reads the host environment", "expandenv": "reads the host environment",
 	"getHostByName": "performs network lookups",

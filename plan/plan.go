@@ -168,7 +168,7 @@ func (p Plan) Summary(w io.Writer, releaseName string, from, to int) error {
 	return err
 }
 
-// Print writes the plan in the tech design §10.2 format.
+// Print writes the plan in the format the CLI shows.
 func (p Plan) Print(w io.Writer, releaseName string, from, to int) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Deployment Plan\n\nRelease: %s\n", releaseName)

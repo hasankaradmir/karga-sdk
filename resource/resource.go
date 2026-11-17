@@ -1,4 +1,4 @@
-// Package resource defines karga resources (tech design §6) and their validation.
+// Package resource defines karga resources and their validation.
 package resource
 
 import (
