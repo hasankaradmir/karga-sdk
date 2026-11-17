@@ -118,6 +118,8 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, pullPolicy: sometimes}\n", "pullPolicy"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: rolling}}\n", "updateStrategy.type"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {drainTimeout: 0s}}\n", "drainTimeout"},
+		{head + "kind: Workload\nspec: {image: a, stopTimeout: 500ms}\n", "stopTimeout"},
+		{head + "kind: Workload\nspec: {image: a, stopTimeout: 2h}\n", "stopTimeout"},
 		{head + "kind: Workload\nspec: {image: a, updateStrategy: {type: replace, proxy: true}}\n", "proxy"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, hostPort: 80, routes: [{host: a.local}]}]}\n", "exclusive"},
 		{head + "kind: Workload\nspec: {image: a, ports: [{containerPort: 1, protocol: udp, routes: [{host: a.local}]}]}\n", "require protocol tcp"},

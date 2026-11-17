@@ -36,6 +36,9 @@ type WorkloadSpec struct {
 	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
 	// only, so it is not part of the workload's digest.
 	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
+	// StopTimeout is how long the container gets to shut down after SIGTERM before it is killed
+	// (default DefaultStopTimeout). Not written as a default, so adding it to karga recreated nothing.
+	StopTimeout string `json:"stopTimeout,omitempty"`
 	// AnonymousVolumes are the image VOLUME paths the current container keeps in anonymous volumes
 	// (no Volume is mounted there). It is found in the runtime before planning, not written in a
 	// package, and is not part of the spec.
@@ -47,6 +50,20 @@ const (
 	StrategyRecreate = "recreate"
 	StrategyReplace  = "replace"
 )
+
+// DefaultStopTimeout is how long a container gets to shut down when no stopTimeout is set.
+const DefaultStopTimeout = 10 * time.Second
+
+// MaxStopTimeout bounds stopTimeout.
+const MaxStopTimeout = time.Hour
+
+// StopGrace returns the stop timeout, with the default applied.
+func (s *WorkloadSpec) StopGrace() time.Duration {
+	if d, err := time.ParseDuration(s.StopTimeout); err == nil && d > 0 {
+		return d
+	}
+	return DefaultStopTimeout
+}
 
 // DefaultDrainTimeout is how long the old container gets to stop gracefully after a replace.
 const DefaultDrainTimeout = 10 * time.Second
@@ -398,6 +415,11 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if !path.IsAbs(m.MountPath) {
 			errs = append(errs, fmt.Errorf("spec.mounts[%d].mountPath: %q must be an absolute path", i, m.MountPath))
+		}
+	}
+	if s.StopTimeout != "" {
+		if d, err := time.ParseDuration(s.StopTimeout); err != nil || d < time.Second || d > MaxStopTimeout {
+			errs = append(errs, fmt.Errorf("spec.stopTimeout: %q must be a duration from 1s to %s", s.StopTimeout, MaxStopTimeout))
 		}
 	}
 	if u := s.UpdateStrategy; u != nil {

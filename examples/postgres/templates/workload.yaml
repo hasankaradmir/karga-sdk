@@ -5,6 +5,8 @@ metadata:
 spec:
   image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
   restartPolicy: always
+  # A clean shutdown writes a checkpoint; give it time before Docker kills the container.
+  stopTimeout: 60s
   environment:
     POSTGRES_DB: {{ .Values.database.name | quote }}
     POSTGRES_USER: {{ .Values.database.user | quote }}
