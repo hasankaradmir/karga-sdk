@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasankaradmir/karga/internal/infrastructure/archive"
+	"github.com/hasankaradmir/karga-sdk/archive"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -20,7 +20,7 @@ var examples = []struct {
 	{"postgres", "my-db", Options{Sets: []string{"database.password=s3cret"}}},
 }
 
-func examplePath(name string) string { return filepath.Join("..", "..", "..", "examples", name) }
+func examplePath(name string) string { return filepath.Join("..", "examples", name) }
 
 func renderExample(t *testing.T, name, release string, opts Options) []byte {
 	t.Helper()

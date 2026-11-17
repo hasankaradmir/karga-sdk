@@ -12,9 +12,9 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
-	"github.com/hasankaradmir/karga/internal/infrastructure/archive"
-	"github.com/hasankaradmir/karga/internal/infrastructure/values"
+	"github.com/hasankaradmir/karga-sdk/pkg"
+	"github.com/hasankaradmir/karga-sdk/archive"
+	"github.com/hasankaradmir/karga-sdk/values"
 )
 
 const (

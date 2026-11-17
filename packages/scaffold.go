@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
+	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 //go:embed all:scaffold

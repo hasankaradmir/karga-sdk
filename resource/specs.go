@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
+	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // WorkloadSpec runs one container (tech design §6.1). Replicas are intentionally unsupported.

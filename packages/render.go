@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
-	"github.com/hasankaradmir/karga/internal/domain/resource"
-	"github.com/hasankaradmir/karga/internal/infrastructure/renderer"
-	"github.com/hasankaradmir/karga/internal/infrastructure/values"
+	"github.com/hasankaradmir/karga-sdk/pkg"
+	"github.com/hasankaradmir/karga-sdk/resource"
+	"github.com/hasankaradmir/karga-sdk/renderer"
+	"github.com/hasankaradmir/karga-sdk/values"
 )
 
 // Options controls how a package is rendered.

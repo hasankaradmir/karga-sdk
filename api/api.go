@@ -9,8 +9,8 @@ import (
 
 	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/domain/release"
-	"github.com/hasankaradmir/karga/internal/domain/resource"
+	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/resource"
 	"github.com/hasankaradmir/karga/internal/ports"
 )
 

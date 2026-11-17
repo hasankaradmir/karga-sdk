@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga/internal/infrastructure/archive"
+	"github.com/hasankaradmir/karga-sdk/archive"
 )
 
 func TestLoadMinimal(t *testing.T) {

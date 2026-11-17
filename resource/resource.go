@@ -11,7 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
+	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // APIVersion is the only resource apiVersion accepted.

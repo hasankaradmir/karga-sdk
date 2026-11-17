@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
+	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // ServiceSpec gives one workload a stable name inside the release, served by the release proxy,

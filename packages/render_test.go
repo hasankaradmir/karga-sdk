@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga/internal/domain/pkg"
-	"github.com/hasankaradmir/karga/internal/domain/resource"
+	"github.com/hasankaradmir/karga-sdk/pkg"
+	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
 func renderDemo(t *testing.T, opts Options) (*Manifest, error) {
