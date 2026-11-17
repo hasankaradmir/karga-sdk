@@ -50,7 +50,7 @@ func TestDecodeWorkload(t *testing.T) {
 		t.Fatalf("defaults not applied: %+v", w)
 	}
 	if w.Resources.CPU != "1" || w.Resources.Memory != "512Mi" || w.Resources.Pids == nil || *w.Resources.Pids != DefaultPids ||
-		*w.Logging != (Logging{MaxSize: "10m", MaxFiles: 3}) {
+		*w.Logging != (Logging{MaxSize: "10m", MaxFiles: 3}) || !*w.Security.NoNewPrivileges {
 		t.Fatalf("resources: %+v", w.Resources)
 	}
 }
@@ -144,6 +144,8 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, resources: {cpu: -1}}\n", "cpu"},
 		{head + "kind: Workload\nspec: {image: a, resources: {pids: -1}}\n", "resources.pids"},
 		{head + "kind: Workload\nspec: {image: a, logging: {maxSize: 10MB}}\n", "logging.maxSize"},
+		{head + "kind: Workload\nspec: {image: a, security: {capAdd: [net-admin]}}\n", "not a capability name"},
+		{head + "kind: Workload\nspec: {image: a, security: {user: \"1000 1000\"}}\n", "security.user"},
 		{head + "kind: Workload\nspec: {image: a, logging: {maxFiles: -1}}\n", "logging.maxFiles"},
 		{head + "kind: Workload\nspec: {image: a, environment: {PORT: 6379}}\n", "environment"},
 		{head + "kind: Config\nspec: {files: {}}\n", "must not be empty"},

@@ -31,6 +31,8 @@ type WorkloadSpec struct {
 	Resources   *Resources   `json:"resources,omitempty"`
 	// Logging rotates the container's log so it cannot fill the disk.
 	Logging *Logging `json:"logging,omitempty"`
+	// Security hardens the container; no-new-privileges is on unless turned off.
+	Security *Security `json:"security,omitempty"`
 	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
 	// only, so it is not part of the workload's digest.
 	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
@@ -171,6 +173,24 @@ type Resources struct {
 	Pids *int64 `json:"pids,omitempty"`
 }
 
+// Security restricts what the container's processes may do.
+type Security struct {
+	// NoNewPrivileges blocks gaining privileges through setuid binaries (default true).
+	NoNewPrivileges *bool `json:"noNewPrivileges,omitempty"`
+	// ReadOnlyRootFilesystem mounts the image read-only; /tmp stays writable (tmpfs).
+	ReadOnlyRootFilesystem bool `json:"readOnlyRootFilesystem,omitempty"`
+	// CapDrop and CapAdd change Linux capabilities, e.g. [ALL] and [NET_BIND_SERVICE].
+	CapDrop []string `json:"capDrop,omitempty"`
+	CapAdd  []string `json:"capAdd,omitempty"`
+	// User runs the process as "uid[:gid]" or a user of the image instead of its default.
+	User string `json:"user,omitempty"`
+}
+
+var (
+	capability = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	userSpec   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$`)
+)
+
 // Logging is the container log rotation: at most MaxFiles files of MaxSize (e.g. 10m).
 type Logging struct {
 	MaxSize  string `json:"maxSize,omitempty"`
@@ -244,6 +264,18 @@ func (s *WorkloadSpec) setDefaults() {
 		}
 		if hc.Type == HealthHTTP && hc.Path == "" {
 			hc.Path = "/"
+		}
+	}
+	if s.Security == nil {
+		s.Security = &Security{}
+	}
+	if s.Security.NoNewPrivileges == nil {
+		on := true
+		s.Security.NoNewPrivileges = &on
+	}
+	for _, caps := range [][]string{s.Security.CapDrop, s.Security.CapAdd} {
+		for i, c := range caps {
+			caps[i] = strings.TrimPrefix(strings.ToUpper(c), "CAP_")
 		}
 	}
 	if s.Logging == nil {
@@ -418,6 +450,18 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if r.Pids != nil && *r.Pids < 0 {
 			errs = append(errs, fmt.Errorf("spec.resources.pids: %d must be 0 (no limit) or positive", *r.Pids))
+		}
+	}
+	if sec := s.Security; sec != nil {
+		for field, caps := range map[string][]string{"capDrop": sec.CapDrop, "capAdd": sec.CapAdd} {
+			for _, c := range caps {
+				if !capability.MatchString(c) {
+					errs = append(errs, fmt.Errorf("spec.security.%s: %q is not a capability name", field, c))
+				}
+			}
+		}
+		if sec.User != "" && !userSpec.MatchString(sec.User) {
+			errs = append(errs, fmt.Errorf("spec.security.user: %q must be uid[:gid] or a user name", sec.User))
 		}
 	}
 	if l := s.Logging; l != nil {
