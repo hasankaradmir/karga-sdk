@@ -36,6 +36,9 @@ type WorkloadSpec struct {
 	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
 	// only, so it is not part of the workload's digest.
 	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
+	// DependsOn names Services of the release this workload needs: it is started only once their
+	// workloads are ready and the release proxy routes to them.
+	DependsOn []string `json:"dependsOn,omitempty"`
 	// StopTimeout is how long the container gets to shut down after SIGTERM before it is killed
 	// (default DefaultStopTimeout). Not written as a default, so adding it to karga recreated nothing.
 	StopTimeout string `json:"stopTimeout,omitempty"`
@@ -321,6 +324,14 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if !path.IsAbs(m.MountPath) {
 			errs = append(errs, fmt.Errorf("spec.mounts[%d].mountPath: %q must be an absolute path", i, m.MountPath))
+		}
+	}
+	for i, d := range s.DependsOn {
+		if !pkg.IsDNSLabel(d) {
+			errs = append(errs, fmt.Errorf("spec.dependsOn[%d]: %q must name a Service", i, d))
+		}
+		if slices.Contains(s.DependsOn[:i], d) {
+			errs = append(errs, fmt.Errorf("spec.dependsOn[%d]: %q is listed twice", i, d))
 		}
 	}
 	if s.StopTimeout != "" {

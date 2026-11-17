@@ -193,6 +193,11 @@ func ValidateSet(rs []Resource) error {
 				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))
 			}
 		}
+		for _, d := range w.DependsOn {
+			if !seen[KindService][d] {
+				errs = append(errs, fmt.Errorf("%s %q: dependsOn: Service %q is not defined", KindWorkload, r.Metadata.Name, d))
+			}
+		}
 	}
 
 	// One release proxy serves every Service of the release on one address, so a port number
