@@ -29,6 +29,8 @@ type WorkloadSpec struct {
 	Mounts      []Mount      `json:"mounts,omitempty"`
 	HealthCheck *HealthCheck `json:"healthCheck,omitempty"`
 	Resources   *Resources   `json:"resources,omitempty"`
+	// Logging rotates the container's log so it cannot fill the disk.
+	Logging *Logging `json:"logging,omitempty"`
 	// UpdateStrategy controls how an upgrade replaces the container. It changes deploy behaviour
 	// only, so it is not part of the workload's digest.
 	UpdateStrategy *UpdateStrategy `json:"updateStrategy,omitempty"`
@@ -157,6 +159,20 @@ type Resources struct {
 	Pids *int64 `json:"pids,omitempty"`
 }
 
+// Logging is the container log rotation: at most MaxFiles files of MaxSize (e.g. 10m).
+type Logging struct {
+	MaxSize  string `json:"maxSize,omitempty"`
+	MaxFiles int    `json:"maxFiles,omitempty"`
+}
+
+// Default log rotation: at most 30MB per container.
+const (
+	DefaultLogMaxSize  = "10m"
+	DefaultLogMaxFiles = 3
+)
+
+var logSize = regexp.MustCompile(`^[1-9][0-9]*[kmg]$`)
+
 // DefaultPids keeps a fork bomb in one container from exhausting the host.
 const DefaultPids int64 = 1024
 
@@ -204,6 +220,15 @@ func (s *WorkloadSpec) setDefaults() {
 	if s.Resources.Pids == nil {
 		p := DefaultPids
 		s.Resources.Pids = &p
+	}
+	if s.Logging == nil {
+		s.Logging = &Logging{}
+	}
+	if s.Logging.MaxSize == "" {
+		s.Logging.MaxSize = DefaultLogMaxSize
+	}
+	if s.Logging.MaxFiles == 0 {
+		s.Logging.MaxFiles = DefaultLogMaxFiles
 	}
 	for i := range s.Ports {
 		if s.Ports[i].Protocol == "" {
@@ -356,6 +381,14 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if r.Pids != nil && *r.Pids < 0 {
 			errs = append(errs, fmt.Errorf("spec.resources.pids: %d must be 0 (no limit) or positive", *r.Pids))
+		}
+	}
+	if l := s.Logging; l != nil {
+		if !logSize.MatchString(l.MaxSize) {
+			errs = append(errs, fmt.Errorf("spec.logging.maxSize: %q must be a size like 10m (k, m or g)", l.MaxSize))
+		}
+		if l.MaxFiles < 1 {
+			errs = append(errs, fmt.Errorf("spec.logging.maxFiles: %d must be at least 1", l.MaxFiles))
 		}
 	}
 	return errors.Join(errs...)
