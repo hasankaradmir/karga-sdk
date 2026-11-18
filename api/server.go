@@ -420,7 +420,9 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := &frameWriter{w: conn}
-	ctx, cancel := context.WithCancel(context.Background())
+	// The request's context, with what the server put in it (who asked); the hijacked connection's
+	// end cancels it through the input loop below.
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	var stdin *io.PipeWriter
