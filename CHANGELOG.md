@@ -9,6 +9,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 - `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
   `ValidateSet` checks the Secret and the key exist.
+- `api/apitest`: `Serve` runs an `api.Backend` behind the real HTTP handler on a unix socket, for
+  tests of API clients.
 
 ### Changed
 
