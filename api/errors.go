@@ -14,6 +14,18 @@ var (
 	ErrIncompatible = errors.New("incompatible API version")
 )
 
+// Errors of the client itself.
+var (
+	// ErrNotRunning is returned when nothing listens on the socket.
+	ErrNotRunning = errors.New("karga-server is not running")
+	// ErrDetached is returned when the caller stopped waiting for an operation the server had
+	// already received: it goes on in karga-server, and its events show how it ends.
+	ErrDetached = errors.New("stopped waiting; the operation goes on in karga-server")
+	// ErrDisconnected is returned when the server went away during an operation; karga-server
+	// finishes it when it runs again.
+	ErrDisconnected = errors.New("karga-server closed the connection before the operation ended")
+)
+
 var kinds = []struct {
 	err    error
 	code   string

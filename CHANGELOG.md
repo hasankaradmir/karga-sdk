@@ -14,9 +14,33 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Changed
 
+- API 3.0 (a new major version: clients and servers of API 2 do not work together).
+  - Every endpoint takes its own request type with a `Validate` method, and the server checks it
+    before the backend sees it: `ReleaseRequest`, `RevisionRequest`, `ValuesRequest`,
+    `DiffRequest`, `ReconcileRequest`, `EventsRequest`, `ExecRequest` and the gateway requests.
+    A request no longer accepts the fields of other endpoints.
+  - `Backend` is the sum of `Deployer`, `Reader`, `Streamer`, `Reconciler` and `GatewayAdmin`;
+    `Remote` adds `Version` and is what `Client` implements.
+  - Renamed: `GetValues`, `GetNotes`, `GetManifest` and `Gateway` are `Values`, `Notes`,
+    `Manifest` and `GatewayRoutes`. `Pause(name, paused)` is `Pause` and `Resume`.
+  - Routes: `/v1/deploy` is `/v1/install`, `/v1/upgrade` and `/v1/rollback`; `/v1/gateway/change`
+    is `/v1/gateway/access-log`, `/v1/gateway/listen`, `/v1/gateway/listeners/add` and
+    `/v1/gateway/listeners/remove`.
+  - `ErrNotRunning`, `ErrDetached` and `ErrDisconnected` are declared with the other errors.
 - Built and checked with Go 1.27.4 and govulncheck 1.10.0.
 
 ### Fixed
+
+- Release names are checked by every request, not only when a package is rendered: a name like
+  `../x` could reach a path on the server. `resource.ValidateReleaseName` also refuses `karga` and
+  `karga-…`, whose runtime objects would take the names of karga's own.
+- Errors of logs, volume backups and exec kept only their message: `errors.Is(err,
+  api.ErrNotFound)` failed for an unknown release. They keep their kind now.
+- `Status`, `Diff`, `Reconcile` and `Uninstall` of `Client` return a nil result with an error.
+- Exec no longer leaves a goroutine behind when its context is never canceled.
+- A package archive larger than 32 MiB is refused before it is read.
+- The API's `Tail`, `TTY` and `Stdin` request fields are omitted when zero, so a newer client of the
+  same major version talks to an older server.
 
 - A package could keep the server rendering forever: a nested `range` (over `until`, an integer
   or a value) that writes nothing never reached the time or output limit. Every loop iteration now

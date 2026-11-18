@@ -19,16 +19,13 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
-// ErrNotRunning is returned when nothing listens on the socket.
-var ErrNotRunning = errors.New("karga-server is not running")
-
-// Client talks to karga-server on a unix socket. It implements Backend.
+// Client talks to karga-server on a unix socket. It implements Remote.
 type Client struct {
 	socket string
 	hc     *http.Client
 }
 
-var _ Backend = (*Client)(nil)
+var _ Remote = (*Client)(nil)
 
 // NewClient returns a client for the server listening on socket.
 func NewClient(socket string) *Client {
@@ -66,30 +63,43 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 	return resp, nil
 }
 
-// call posts in as JSON and decodes the response into out.
-func (c *Client) call(ctx context.Context, path string, in, out any) error {
+// call posts in as JSON and decodes the response into out (nothing for struct{}).
+func call[Out any](ctx context.Context, c *Client, path string, in any) (Out, error) {
+	var out Out
 	body, err := json.Marshal(in)
 	if err != nil {
-		return err
+		return out, err
 	}
 	resp, err := c.post(ctx, path, bytes.NewReader(body), nil)
 	if err != nil {
-		return err
+		return out, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if out == nil {
+	if _, ok := any(out).(struct{}); ok {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
+		return out, nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		var zero Out
+		return zero, err
+	}
+	return out, nil
+}
+
+// do is call for operations that answer nothing.
+func do(ctx context.Context, c *Client, path string, in any) error {
+	_, err := call[struct{}](ctx, c, path, in)
+	return err
 }
 
 // Version returns the server's version.
 func (c *Client) Version(ctx context.Context) (ServerVersion, error) {
-	var v ServerVersion
-	err := c.call(ctx, "/v1/version", struct{}{}, &v)
-	return v, err
+	return call[ServerVersion](ctx, c, "/v1/version", struct{}{})
 }
+
+// maxPackageArchive bounds a package archive the client sends: it travels base64-encoded in a
+// request of at most 64 MiB.
+const maxPackageArchive = 32 << 20
 
 // packPackage reads a package directory or archive for the server.
 func packPackage(path string) ([]byte, error) {
@@ -98,6 +108,10 @@ func packPackage(path string) ([]byte, error) {
 		return nil, err
 	}
 	if !info.IsDir() {
+		// The server takes at most 64 MiB of request; a larger archive is refused here, unread.
+		if info.Size() > maxPackageArchive {
+			return nil, fmt.Errorf("%s: %d bytes; a package archive may have at most %d", path, info.Size(), maxPackageArchive)
+		}
 		return os.ReadFile(path)
 	}
 	var buf bytes.Buffer
@@ -107,35 +121,28 @@ func packPackage(path string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(Event)) (*Result, error) {
+func (c *Client) deploy(ctx context.Context, path string, req any, progress func(Event)) (*Result, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.post(ctx, "/v1/deploy", bytes.NewReader(body), nil)
+	resp, err := c.post(ctx, path, bytes.NewReader(body), nil)
 	if err != nil {
 		return nil, err
 	}
-	res, err := c.follow(ctx, resp, progress)
+	res, err := c.follow(resp, progress)
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
 	}
 	return res, err
 }
 
-// ErrDetached is returned when the caller stopped waiting for an operation the server had already
-// received: it goes on in karga-server, and its events show how it ends.
-var ErrDetached = errors.New("stopped waiting; the operation goes on in karga-server")
-
-// ErrDisconnected is returned when the server went away during an operation; karga-server finishes
-// it when it runs again.
-var ErrDisconnected = errors.New("karga-server closed the connection before the operation ended")
-
 // follow reads the progress lines of a deploy response until its outcome.
-func (c *Client) follow(_ context.Context, resp *http.Response, progress func(Event)) (*Result, error) {
+// Canceling the request's context closes resp's body, which ends the loop.
+func (c *Client) follow(resp *http.Response, progress func(Event)) (*Result, error) {
 	defer func() { _ = resp.Body.Close() }()
 	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 64<<10), 16<<20)
+	sc.Buffer(make([]byte, 64<<10), maxLine)
 	for sc.Scan() {
 		var l deployLine
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
@@ -151,11 +158,16 @@ func (c *Client) follow(_ context.Context, resp *http.Response, progress func(Ev
 			return l.Result, nil
 		}
 	}
-	if err := sc.Err(); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
+		return nil, fmt.Errorf("karga-server: a progress line is longer than %d bytes", maxLine)
+	} else if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
 	return nil, ErrDisconnected
 }
+
+// maxLine bounds one line of a deploy response.
+const maxLine = 16 << 20
 
 // Install implements Backend.
 func (c *Client) Install(ctx context.Context, req InstallRequest, progress func(Event)) (*Result, error) {
@@ -163,7 +175,7 @@ func (c *Client) Install(ctx context.Context, req InstallRequest, progress func(
 	if err != nil {
 		return nil, err
 	}
-	return c.deploy(ctx, deployRequest{Install: &req, Package: pkg}, progress)
+	return c.deploy(ctx, "/v1/install", deployRequest[InstallRequest]{Request: req, Package: pkg}, progress)
 }
 
 // Upgrade implements Backend.
@@ -172,48 +184,43 @@ func (c *Client) Upgrade(ctx context.Context, req UpgradeRequest, progress func(
 	if err != nil {
 		return nil, err
 	}
-	return c.deploy(ctx, deployRequest{Upgrade: &req, Package: pkg}, progress)
+	return c.deploy(ctx, "/v1/upgrade", deployRequest[UpgradeRequest]{Request: req, Package: pkg}, progress)
 }
 
 // Rollback implements Backend.
 func (c *Client) Rollback(ctx context.Context, req RollbackRequest, progress func(Event)) (*Result, error) {
-	return c.deploy(ctx, deployRequest{Rollback: &req}, progress)
+	return c.deploy(ctx, "/v1/rollback", deployRequest[RollbackRequest]{Request: req}, progress)
 }
 
 // Uninstall implements Backend.
 func (c *Client) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
-	var out *Result
-	return out, c.call(ctx, "/v1/uninstall", req, &out)
+	return call[*Result](ctx, c, "/v1/uninstall", req)
 }
 
 // List implements Backend.
 func (c *Client) List(ctx context.Context) ([]Release, error) {
-	var out []Release
-	return out, c.call(ctx, "/v1/list", struct{}{}, &out)
+	return call[[]Release](ctx, c, "/v1/list", struct{}{})
 }
 
 // History implements Backend.
-func (c *Client) History(ctx context.Context, name string) ([]Revision, error) {
-	var out []Revision
-	return out, c.call(ctx, "/v1/history", nameRequest{Name: name}, &out)
+func (c *Client) History(ctx context.Context, req ReleaseRequest) ([]Revision, error) {
+	return call[[]Revision](ctx, c, "/v1/history", req)
 }
 
-// GetValues implements Backend.
-func (c *Client) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
-	var out map[string]any
-	return out, c.call(ctx, "/v1/values", nameRequest{Name: name, Revision: revision, All: all}, &out)
+// Values implements Backend.
+func (c *Client) Values(ctx context.Context, req ValuesRequest) (map[string]any, error) {
+	return call[map[string]any](ctx, c, "/v1/values", req)
 }
 
-// GetNotes implements Backend.
-func (c *Client) GetNotes(ctx context.Context, name string, revision int) (string, error) {
-	var out string
-	return out, c.call(ctx, "/v1/notes", nameRequest{Name: name, Revision: revision}, &out)
+// Notes implements Backend.
+func (c *Client) Notes(ctx context.Context, req RevisionRequest) (string, error) {
+	return call[string](ctx, c, "/v1/notes", req)
 }
 
-// GetManifest implements Backend.
-func (c *Client) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
-	var docs []json.RawMessage
-	if err := c.call(ctx, "/v1/manifest", nameRequest{Name: name, Revision: revision}, &docs); err != nil {
+// Manifest implements Backend.
+func (c *Client) Manifest(ctx context.Context, req RevisionRequest) ([]resource.Resource, error) {
+	docs, err := call[[]json.RawMessage](ctx, c, "/v1/manifest", req)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]resource.Resource, 0, len(docs))
@@ -228,21 +235,38 @@ func (c *Client) GetManifest(ctx context.Context, name string, revision int) ([]
 }
 
 // Status implements Backend.
-func (c *Client) Status(ctx context.Context, name string) (*StatusReport, error) {
-	var out StatusReport
-	return &out, c.call(ctx, "/v1/status", nameRequest{Name: name}, &out)
+func (c *Client) Status(ctx context.Context, req ReleaseRequest) (*StatusReport, error) {
+	return call[*StatusReport](ctx, c, "/v1/status", req)
 }
 
 // Diff implements Backend.
-func (c *Client) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
-	var out RevisionDiff
-	return &out, c.call(ctx, "/v1/diff", nameRequest{Name: name, From: from, To: to}, &out)
+func (c *Client) Diff(ctx context.Context, req DiffRequest) (*RevisionDiff, error) {
+	return call[*RevisionDiff](ctx, c, "/v1/diff", req)
 }
 
 // Resources implements Backend.
-func (c *Client) Resources(ctx context.Context, name string) ([]AppliedResource, error) {
-	var out []AppliedResource
-	return out, c.call(ctx, "/v1/resources", nameRequest{Name: name}, &out)
+func (c *Client) Resources(ctx context.Context, req ReleaseRequest) ([]AppliedResource, error) {
+	return call[[]AppliedResource](ctx, c, "/v1/resources", req)
+}
+
+// Events implements Backend.
+func (c *Client) Events(ctx context.Context, req EventsRequest) ([]Operation, error) {
+	return call[[]Operation](ctx, c, "/v1/events", req)
+}
+
+// Reconcile implements Backend.
+func (c *Client) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
+	return call[*ReconcileResult](ctx, c, "/v1/reconcile", req)
+}
+
+// Pause implements Backend.
+func (c *Client) Pause(ctx context.Context, req ReleaseRequest) error {
+	return do(ctx, c, "/v1/pause", req)
+}
+
+// Resume implements Backend.
+func (c *Client) Resume(ctx context.Context, req ReleaseRequest) error {
+	return do(ctx, c, "/v1/resume", req)
 }
 
 // download copies a streamed response to w and returns the error the server put in its trailer.
@@ -263,7 +287,7 @@ func (c *Client) download(ctx context.Context, path string, in any, w io.Writer)
 		return err
 	}
 	if msg := resp.Trailer.Get(trailerError); msg != "" {
-		return errors.New(msg)
+		return remote(msg, resp.Trailer.Get(trailerCode))
 	}
 	return nil
 }
@@ -288,51 +312,46 @@ func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r 
 	return resp.Body.Close()
 }
 
-// Gateway implements Backend.
-func (c *Client) Gateway(ctx context.Context) ([]Exposed, error) {
-	var out []Exposed
-	return out, c.call(ctx, "/v1/gateway/routes", struct{}{}, &out)
+// GatewayRoutes implements Backend.
+func (c *Client) GatewayRoutes(ctx context.Context) ([]Exposed, error) {
+	return call[[]Exposed](ctx, c, "/v1/gateway/routes", struct{}{})
 }
 
 // GatewayHealth implements Backend.
 func (c *Client) GatewayHealth(ctx context.Context) (State, error) {
-	var out State
-	return out, c.call(ctx, "/v1/gateway/health", struct{}{}, &out)
+	return call[State](ctx, c, "/v1/gateway/health", struct{}{})
 }
 
 // GatewaySettings implements Backend.
 func (c *Client) GatewaySettings(ctx context.Context) (Settings, map[string][]string, error) {
-	var out gatewaySettings
-	err := c.call(ctx, "/v1/gateway/settings", struct{}{}, &out)
+	out, err := call[gatewaySettings](ctx, c, "/v1/gateway/settings", struct{}{})
 	return out.Settings, out.Users, err
 }
 
 // SetGatewayAccessLog implements Backend.
-func (c *Client) SetGatewayAccessLog(ctx context.Context, on bool) error {
-	return c.call(ctx, "/v1/gateway/change", gatewayChange{AccessLog: &on}, nil)
+func (c *Client) SetGatewayAccessLog(ctx context.Context, req GatewayAccessLogRequest) error {
+	return do(ctx, c, "/v1/gateway/access-log", req)
 }
 
 // SetGatewayListen implements Backend.
-func (c *Client) SetGatewayListen(ctx context.Context, addrs []string) error {
-	if addrs == nil {
-		addrs = []string{}
-	}
-	return c.call(ctx, "/v1/gateway/change", gatewayChange{Listen: addrs}, nil)
+func (c *Client) SetGatewayListen(ctx context.Context, req GatewayListenRequest) error {
+	return do(ctx, c, "/v1/gateway/listen", req)
 }
 
 // AddGatewayListener implements Backend.
 func (c *Client) AddGatewayListener(ctx context.Context, l Listener) error {
-	return c.call(ctx, "/v1/gateway/change", gatewayChange{Add: &l}, nil)
+	return do(ctx, c, "/v1/gateway/listeners/add", l)
 }
 
 // RemoveGatewayListener implements Backend.
-func (c *Client) RemoveGatewayListener(ctx context.Context, name string) error {
-	return c.call(ctx, "/v1/gateway/change", gatewayChange{Remove: name}, nil)
+func (c *Client) RemoveGatewayListener(ctx context.Context, req GatewayListenerRequest) error {
+	return do(ctx, c, "/v1/gateway/listeners/remove", req)
 }
 
 // Exec implements Backend: the connection is upgraded and the streams travel as frames.
-func (c *Client) Exec(ctx context.Context, rel, workload string, opts ExecOptions) (int, error) {
-	body, err := json.Marshal(execRequest{Release: rel, Workload: workload, Cmd: opts.Cmd, TTY: opts.TTY,
+func (c *Client) Exec(ctx context.Context, req ExecRequest) (int, error) {
+	opts := req.ExecOptions
+	body, err := json.Marshal(execRequest{Release: req.Release, Workload: req.Workload, Cmd: opts.Cmd, TTY: opts.TTY,
 		Stdin: opts.Stdin != nil, Width: opts.Width, Height: opts.Height})
 	if err != nil {
 		return -1, err
@@ -363,10 +382,9 @@ func (c *Client) Exec(ctx context.Context, rel, workload string, opts ExecOption
 			}
 		}()
 	}
-	go func() {
-		<-ctx.Done()
-		_ = conn.Close()
-	}()
+	// Canceling ctx ends the command's session; stop releases the watch when Exec returns.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	stdout, stderr := opts.Stdout, opts.Stderr
 	if stdout == nil {
 		stdout = io.Discard
@@ -390,24 +408,11 @@ func (c *Client) Exec(ctx context.Context, rel, workload string, opts ExecOption
 		case frameExit:
 			return strconv.Atoi(strings.TrimSpace(string(p)))
 		case frameError:
-			return -1, errors.New(string(p))
+			var e errorResponse
+			if json.Unmarshal(p, &e) != nil {
+				return -1, errors.New(string(p))
+			}
+			return -1, remote(e.Error, e.Code)
 		}
 	}
-}
-
-// Reconcile implements Backend.
-func (c *Client) Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
-	var out ReconcileResult
-	return &out, c.call(ctx, "/v1/reconcile", nameRequest{Name: name, Force: force}, &out)
-}
-
-// Pause implements Backend.
-func (c *Client) Pause(ctx context.Context, name string, paused bool) error {
-	return c.call(ctx, "/v1/pause", nameRequest{Name: name, Paused: paused}, nil)
-}
-
-// Events implements Backend.
-func (c *Client) Events(ctx context.Context, name string, afterID int64, limit int) ([]Operation, error) {
-	var out []Operation
-	return out, c.call(ctx, "/v1/events", nameRequest{Name: name, After: afterID, Limit: limit}, &out)
 }

@@ -16,8 +16,8 @@ const (
 	frameResize               // client -> server: width, height (uint32 each)
 	frameStdout               // server -> client
 	frameStderr               // server -> client
-	frameExit                 // server -> client: exit code (int32); last frame
-	frameError                // server -> client: error message; last frame
+	frameExit                 // server -> client: exit code in decimal; last frame
+	frameError                // server -> client: errorResponse as JSON; last frame
 )
 
 // maxFrame bounds a frame so a broken peer cannot make the other side allocate without limit.

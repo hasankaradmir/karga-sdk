@@ -57,8 +57,8 @@ var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
 
 // Render merges values, validates them, renders templates and decodes the resources.
 func Render(p *Package, opts Options) (*Manifest, error) {
-	if !resource.IsDNSLabel(opts.ReleaseName) {
-		return nil, fmt.Errorf("release name %q must be a DNS label (lowercase letters, digits and '-')", opts.ReleaseName)
+	if err := resource.ValidateReleaseName(opts.ReleaseName); err != nil {
+		return nil, err
 	}
 	if opts.Revision == 0 {
 		opts.Revision = 1

@@ -119,7 +119,7 @@ type LogsRequest struct {
 	Proxy     bool     `json:"proxy,omitempty"`
 	Gateway   bool     `json:"gateway,omitempty"`
 	// Tail is the number of lines per container from the end (negative: all).
-	Tail   int  `json:"tail"`
+	Tail   int  `json:"tail,omitempty"`
 	Follow bool `json:"follow,omitempty"`
 }
 

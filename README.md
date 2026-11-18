@@ -17,7 +17,7 @@ go get github.com/hasankaradmir/karga-sdk
 
 | Package | What it holds |
 |---|---|
-| `api` | Request, result and view types (`Release`, `Revision`, `Operation`, `Plan`, `Event`, …), error kinds, the API version, the `Backend` interface, the unix socket `Client` and the HTTP handler (`NewServer`) |
+| `api` | Request, result and view types (`Release`, `Revision`, `Operation`, `Plan`, `Event`, …), error kinds, the API version, the `Backend` interface (the sum of `Deployer`, `Reader`, `Streamer`, `Reconciler` and `GatewayAdmin`), the unix socket `Client` and the HTTP handler (`NewServer`); `api/apitest` serves a `Backend` for tests of clients |
 | `packages` | The package engine: `Load`, `Lint`, `Render`, `Digest`; package metadata (`Package.yaml`); masking of secret values (`Manifest.Redact`, `RedactedDocuments`) |
 | `resource` | The resource kinds a package renders (Workload, Service, Volume, Network, Config, Secret), their decoding and validation, `DefaultCaps` |
 | `examples` | Reference packages (Redis, Postgres), used by the tests |
@@ -54,14 +54,19 @@ res, err := c.Upgrade(ctx, api.UpgradeRequest{Name: "cache", Package: "./redis",
 if errors.Is(err, api.ErrNotFound) { ... }
 ```
 
-`Client` implements `api.Backend`, as karga-server does. Errors keep their kind across the socket:
-`errors.Is` finds `api.ErrNotFound`, `api.ErrConflict`, `api.ErrInvalid` and `api.ErrIncompatible`
-on the client side.
+`Client` implements `api.Remote` (`api.Backend` and `Version`); karga-server implements
+`api.Backend`. Code that needs only part of it takes the smaller interface it uses. Every endpoint
+has its own request type (`api.ReleaseRequest`, `api.DiffRequest`, …) with a `Validate` method; the
+server checks each request before it reaches the backend (release names are DNS labels that do not
+start with `karga`) and answers `api.ErrInvalid` otherwise. Errors keep their kind across the
+socket, streamed responses (logs, backups, exec) included: `errors.Is` finds `api.ErrNotFound`,
+`api.ErrConflict`, `api.ErrInvalid` and `api.ErrIncompatible` on the client side.
 
 Every request carries the API version `Major.Minor` (`api.Version`, header `Karga-Api`). A client
 and a server work together when their Major is the same, whatever their release versions. A minor
-version only adds endpoints and request fields whose zero value keeps the old behaviour; a newer
-client still works with an older server and gets a message to upgrade it for what it lacks.
+version only adds endpoints and request fields whose zero value keeps the old behaviour (optional
+request fields are `omitempty`, which a test enforces); a newer client still works with an older
+server and gets a message to upgrade it for what it lacks.
 
 ## Development
 

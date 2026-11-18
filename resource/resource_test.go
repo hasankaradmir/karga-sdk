@@ -343,3 +343,15 @@ func TestDecodeRejects(t *testing.T) {
 		t.Fatal("DefaultCaps can be changed by its callers")
 	}
 }
+
+func TestValidateReleaseName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"shop": true, "a": true, "web-1": true, strings.Repeat("a", 63): true,
+		"": false, "Shop": false, "../x": false, "a/b": false, "-a": false, strings.Repeat("a", 64): false,
+		"karga": false, "karga-gateway": false, "kargo": true,
+	} {
+		if err := ValidateReleaseName(name); (err == nil) != ok {
+			t.Errorf("ValidateReleaseName(%q) = %v", name, err)
+		}
+	}
+}
