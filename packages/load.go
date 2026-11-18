@@ -102,8 +102,8 @@ func fromFiles(files map[string][]byte) (*Package, error) {
 			hasVendored = true
 		}
 	}
-	if len(md.Dependencies) > 0 || hasVendored {
-		return nil, errors.New("package dependencies are not supported yet (planned for M4)")
+	if hasVendored {
+		return nil, errors.New("packages/: package dependencies are not supported")
 	}
 	return p, nil
 }

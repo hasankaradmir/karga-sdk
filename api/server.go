@@ -29,6 +29,8 @@ type Options struct {
 	MaxRequest int64
 	// TempDir holds uploaded packages and volume backups while they are used (default os.TempDir()).
 	TempDir string
+	// MaxRestore bounds an uploaded volume backup (default 16 GiB).
+	MaxRestore int64
 	// Classify returns the kind (ErrNotFound, ErrConflict, ErrInvalid) of an error the Backend
 	// returned that does not wrap one already, or nil: the client then sees an internal error.
 	Classify func(error) error
@@ -38,6 +40,9 @@ type Options struct {
 func NewServer(b Backend, version string, opts Options) *Server {
 	if opts.MaxRequest == 0 {
 		opts.MaxRequest = 64 << 20
+	}
+	if opts.MaxRestore == 0 {
+		opts.MaxRestore = 16 << 30
 	}
 	if opts.Classify == nil {
 		opts.Classify = func(error) error { return nil }
@@ -113,7 +118,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, pattern := s.mux.Handler(r); pattern == "" {
-		s.writeError(w, fmt.Errorf("%w: karga-server (API %s) does not know %s; upgrade karga-server", ErrNotFound, Version, r.URL.Path))
+		s.writeError(w, fmt.Errorf("%w: karga-server (API %s) does not know %s; upgrade karga-server", ErrIncompatible, Version, r.URL.Path))
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -154,9 +159,17 @@ func handle[Req any](s *Server, fn func(context.Context, Req) (any, error)) http
 // decode reads the JSON request body into v; on failure it answers the request and returns false.
 // An empty body leaves v as it is.
 func (s *Server) decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	err := json.NewDecoder(io.LimitReader(r.Body, s.opts.MaxRequest)).Decode(v)
+	dec := json.NewDecoder(io.LimitReader(r.Body, s.opts.MaxRequest))
+	// A field this server does not know comes from a newer client: say so rather than ignore it.
+	dec.DisallowUnknownFields()
+	err := dec.Decode(v)
 	if err == nil || errors.Is(err, io.EOF) {
 		return true
+	}
+	if strings.HasPrefix(err.Error(), "json: unknown field ") {
+		s.writeError(w, fmt.Errorf("%w: karga-server (API %s) does not know request field %s; upgrade karga-server",
+			ErrIncompatible, Version, strings.TrimPrefix(err.Error(), "json: unknown field ")))
+		return false
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		err = fmt.Errorf("request larger than %d bytes or cut short", s.opts.MaxRequest)
@@ -316,8 +329,13 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = f.Close(); _ = os.Remove(f.Name()) }()
-	if _, err := io.Copy(f, r.Body); err != nil {
+	n, err := io.Copy(f, io.LimitReader(r.Body, s.opts.MaxRestore+1))
+	if err != nil {
 		s.writeError(w, fmt.Errorf("receiving the backup: %w", err))
+		return
+	}
+	if n > s.opts.MaxRestore {
+		s.writeError(w, fmt.Errorf("%w: the backup is larger than %d bytes", ErrInvalid, s.opts.MaxRestore))
 		return
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {

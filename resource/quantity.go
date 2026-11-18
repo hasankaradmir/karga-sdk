@@ -3,9 +3,13 @@ package resource
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// decimal is a plain decimal number: ParseFloat alone also takes hex floats, exponents and "inf".
+var decimal = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 var memorySuffixes = []struct {
 	suffix string
@@ -26,7 +30,7 @@ func ParseMemory(s string) (int64, error) {
 		}
 	}
 	f, err := strconv.ParseFloat(num, 64)
-	if err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 {
+	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 {
 		return 0, fmt.Errorf("%q is not a valid memory quantity (e.g. 512Mi, 1Gi)", s)
 	}
 	return int64(f * factor), nil
@@ -39,7 +43,7 @@ func ParseCPU(s string) (int64, error) {
 		num, factor = strings.TrimSuffix(s, "m"), 1
 	}
 	f, err := strconv.ParseFloat(num, 64)
-	if err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 || f*factor < 1 {
+	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 || f*factor < 1 {
 		return 0, fmt.Errorf("%q is not a valid cpu quantity (e.g. 1, 0.5, 500m)", s)
 	}
 	return int64(f * factor), nil

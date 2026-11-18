@@ -111,3 +111,29 @@ func TestAPIVersionContract(t *testing.T) {
 		t.Fatalf("newer minor: %d %q", code, msg)
 	}
 }
+
+func TestVersionMatchesMajorMinor(t *testing.T) {
+	if want := fmt.Sprintf("%d.%d", Major, Minor); Version != want {
+		t.Fatalf("Version %q, want %q", Version, want)
+	}
+}
+
+// What an older server lacks is reported as an incompatibility, never ignored.
+func TestNewerClientFeatures(t *testing.T) {
+	sock := serve(t, &slow{})
+	post := func(path, body string) error {
+		t.Helper()
+		c := NewClient(sock)
+		resp, err := c.post(context.Background(), path, strings.NewReader(body), nil)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		return err
+	}
+	if err := post("/v1/list", `{"since":"yesterday"}`); !errors.Is(err, ErrIncompatible) || !strings.Contains(err.Error(), `"since"`) {
+		t.Fatalf("unknown field: %v", err)
+	}
+	if err := post("/v1/something-new", `{}`); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("unknown endpoint: %v", err)
+	}
+}

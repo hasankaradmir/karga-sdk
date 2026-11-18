@@ -10,10 +10,7 @@ func valid() Metadata {
 		APIVersion: APIVersion,
 		Name:       "redis",
 		Version:    "1.0.0",
-		Runtime:    Runtime{Supported: []string{"docker", "podman"}},
-		Dependencies: []Dependency{
-			{Name: "postgres", Repository: "stable", Version: "^1.0.0"},
-		},
+		Runtime:    Runtime{Supported: []string{"docker"}},
 	}
 }
 
@@ -30,7 +27,7 @@ func TestMetadataValidate(t *testing.T) {
 		{"non-semver version", func(m *Metadata) { m.Version = "1.0" }, "version"},
 		{"no runtimes", func(m *Metadata) { m.Runtime.Supported = nil }, "runtime.supported"},
 		{"unknown runtime", func(m *Metadata) { m.Runtime.Supported = []string{"containerd"} }, "containerd"},
-		{"bad dependency constraint", func(m *Metadata) { m.Dependencies[0].Version = "not-a-version" }, "dependencies[0].version"},
+		{"podman", func(m *Metadata) { m.Runtime.Supported = []string{"podman"} }, "podman"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

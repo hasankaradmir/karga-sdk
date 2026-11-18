@@ -159,11 +159,20 @@ type Resources struct {
 	Pids *int64 `json:"pids,omitempty"`
 }
 
+// imageRef matches [registry[:port]/]repository[:tag][@sha256:digest], lowercase repository paths
+// as registries require.
+var imageRef = regexp.MustCompile(`^(?:[a-zA-Z0-9.-]+(?::[0-9]+)?/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
+
+// minMemory is the smallest memory limit Docker accepts.
+const minMemory = 6 << 20
+
 // DefaultCaps are the Linux capabilities a container has by default (Docker's set). capAdd may name
 // them, typically after capDrop: [ALL]; karga-server refuses other capabilities unless the host
 // administrator allows them.
-var DefaultCaps = []string{"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD",
-	"NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT"}
+func DefaultCaps() []string {
+	return []string{"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD",
+		"NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT"}
+}
 
 // Security restricts what the container's processes may do.
 type Security struct {
@@ -283,8 +292,11 @@ func (s *WorkloadSpec) setDefaults() {
 
 func (s *WorkloadSpec) validate() error {
 	var errs []error
-	if s.Image == "" {
+	switch {
+	case s.Image == "":
 		errs = append(errs, errors.New("spec.image is required"))
+	case !imageRef.MatchString(s.Image):
+		errs = append(errs, fmt.Errorf("spec.image: %q is not an image reference ([registry/]repository[:tag][@sha256:digest])", s.Image))
 	}
 	if !restartPolicies[s.RestartPolicy] {
 		errs = append(errs, fmt.Errorf("spec.restartPolicy: %q must be one of always, on-failure, unless-stopped, never", s.RestartPolicy))
@@ -325,6 +337,12 @@ func (s *WorkloadSpec) validate() error {
 		}
 		if !path.IsAbs(m.MountPath) {
 			errs = append(errs, fmt.Errorf("spec.mounts[%d].mountPath: %q must be an absolute path", i, m.MountPath))
+		}
+		for j, o := range s.Mounts[:i] {
+			a, b := path.Clean(o.MountPath), path.Clean(m.MountPath)
+			if a == b || strings.HasPrefix(b, a+"/") || strings.HasPrefix(a, b+"/") || a == "/" || b == "/" {
+				errs = append(errs, fmt.Errorf("spec.mounts[%d].mountPath: %q overlaps spec.mounts[%d] (%q)", i, m.MountPath, j, o.MountPath))
+			}
 		}
 	}
 	for i, d := range s.DependsOn {
@@ -383,8 +401,10 @@ func (s *WorkloadSpec) validate() error {
 	}
 	if r := s.Resources; r != nil {
 		if r.Memory != "" {
-			if _, err := ParseMemory(string(r.Memory)); err != nil {
+			if n, err := ParseMemory(string(r.Memory)); err != nil {
 				errs = append(errs, fmt.Errorf("spec.resources.memory: %w", err))
+			} else if n < minMemory {
+				errs = append(errs, fmt.Errorf("spec.resources.memory: %q is below Docker's minimum of 6Mi", r.Memory))
 			}
 		}
 		if r.CPU != "" {
@@ -437,10 +457,14 @@ func (s *VolumeSpec) setDefaults() {
 }
 
 func (s *VolumeSpec) validate() error {
+	var errs []error
 	if s.Retention != "retain" && s.Retention != "delete" {
-		return fmt.Errorf("spec.retention: %q must be retain or delete", s.Retention)
+		errs = append(errs, fmt.Errorf("spec.retention: %q must be retain or delete", s.Retention))
 	}
-	return nil
+	if len(s.MountOptions) > 0 {
+		errs = append(errs, errors.New("spec.mountOptions is not supported yet"))
+	}
+	return errors.Join(errs...)
 }
 
 // NetworkSpec is a container network.

@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -116,8 +115,8 @@ const (
 	Minor = 0
 )
 
-// Version is the API version this package speaks, e.g. "2.0".
-var Version = fmt.Sprintf("%d.%d", Major, Minor)
+// Version is the API version this package speaks: Major.Minor.
+const Version = "2.0"
 
 const apiHeader = "Karga-Api"
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -195,7 +196,6 @@ func TestValidateSet(t *testing.T) {
 		{"missing volume", []Resource{w}, `Volume "redis-data" is not defined`},
 		{"missing network", []Resource{vol, withNetwork(w, "backend")}, `network "backend" is not defined`},
 		{"duplicate", []Resource{vol, vol, w}, "defined more than once"},
-		{"bad name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: Bad_Name}\n")}, "DNS label"},
 		{"reserved name", []Resource{mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: karga-net}\n")}, "reserved for karga"},
 		{"service without workload", []Resource{vol, w, service(t, "s", "nope", 80, "redis", "")}, `workload "nope" is not defined`},
 		{"service off network", []Resource{vol, w, service(t, "s", "redis", 80, "redis", "")}, "joins no network"},
@@ -292,5 +292,35 @@ func TestUpdateStrategyDefaults(t *testing.T) {
 	w = mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, updateStrategy: {type: replace, drainTimeout: 30s}, mounts: [{volume: v, mountPath: /v, readOnly: true}]}\n").Spec.(*WorkloadSpec)
 	if typ, drain := w.Strategy(); typ != StrategyReplace || drain != 30*time.Second || !w.Mounts[0].ReadOnly {
 		t.Fatalf("explicit: %s %s %+v", typ, drain, w.Mounts)
+	}
+}
+
+func TestDecodeRejects(t *testing.T) {
+	wl := func(spec string) string {
+		return "apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: web}\nspec: " + spec + "\n"
+	}
+	tests := []struct{ doc, want string }{
+		{"apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: Bad_Name}\n", "metadata.name"},
+		{wl("{image: 'Nginx:1'}"), "not an image reference"},
+		{wl("{image: 'nginx:1 2'}"), "not an image reference"},
+		{wl("{image: nginx, mounts: [{volume: a, mountPath: /data}, {config: c, mountPath: /data/conf}]}"), "overlaps"},
+		{wl("{image: nginx, mounts: [{volume: a, mountPath: /data}, {volume: b, mountPath: /data/}]}"), "overlaps"},
+		{wl("{image: nginx, resources: {memory: 0x10p20}}"), "not a valid memory quantity"},
+		{wl("{image: nginx, resources: {memory: 1Mi}}"), "minimum of 6Mi"},
+		{"apiVersion: karga.io/v1alpha1\nkind: Volume\nmetadata: {name: v}\nspec: {mountOptions: [nocopy]}\n", "mountOptions is not supported"},
+	}
+	for _, tt := range tests {
+		if _, err := Decode([]byte(tt.doc)); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("Decode(%q): want error containing %q, got %v", tt.doc, tt.want, err)
+		}
+	}
+	for _, img := range []string{"nginx", "nginx:1.27-alpine", "library/redis:7", "ghcr.io/org/app:v1.2", "localhost:5000/x",
+		"redis@sha256:" + strings.Repeat("a", 64), "registry.example.com:443/team/web:1.0@sha256:" + strings.Repeat("b", 64)} {
+		if _, err := Decode([]byte(wl("{image: '" + img + "'}"))); err != nil {
+			t.Errorf("image %s: %v", img, err)
+		}
+	}
+	if DefaultCaps()[0] = "SYS_ADMIN"; slices.Contains(DefaultCaps(), "SYS_ADMIN") {
+		t.Fatal("DefaultCaps can be changed by its callers")
 	}
 }

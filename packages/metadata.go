@@ -12,17 +12,17 @@ import (
 // APIVersion is the only Package.yaml apiVersion accepted.
 const APIVersion = "karga.io/v1alpha1"
 
-var supportedRuntimes = map[string]bool{"docker": true, "podman": true}
+// supportedRuntimes are the runtimes karga can run packages on.
+var supportedRuntimes = map[string]bool{"docker": true}
 
 // Metadata is the content of Package.yaml.
 type Metadata struct {
-	APIVersion   string       `yaml:"apiVersion" json:"apiVersion"`
-	Name         string       `yaml:"name" json:"name"`
-	Version      string       `yaml:"version" json:"version"`
-	Description  string       `yaml:"description,omitempty" json:"description,omitempty"`
-	Maintainers  []Maintainer `yaml:"maintainers,omitempty" json:"maintainers,omitempty"`
-	Runtime      Runtime      `yaml:"runtime" json:"runtime"`
-	Dependencies []Dependency `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
+	APIVersion  string       `yaml:"apiVersion" json:"apiVersion"`
+	Name        string       `yaml:"name" json:"name"`
+	Version     string       `yaml:"version" json:"version"`
+	Description string       `yaml:"description,omitempty" json:"description,omitempty"`
+	Maintainers []Maintainer `yaml:"maintainers,omitempty" json:"maintainers,omitempty"`
+	Runtime     Runtime      `yaml:"runtime" json:"runtime"`
 }
 
 // Maintainer is a package maintainer.
@@ -34,13 +34,6 @@ type Maintainer struct {
 // Runtime declares runtime compatibility. It is a claim, not a guarantee.
 type Runtime struct {
 	Supported []string `yaml:"supported" json:"supported"`
-}
-
-// Dependency is another package this package depends on.
-type Dependency struct {
-	Name       string `yaml:"name" json:"name"`
-	Repository string `yaml:"repository" json:"repository"`
-	Version    string `yaml:"version" json:"version"`
 }
 
 // Validate returns every problem found in m, joined.
@@ -60,15 +53,7 @@ func (m Metadata) Validate() error {
 	}
 	for _, r := range m.Runtime.Supported {
 		if !supportedRuntimes[r] {
-			errs = append(errs, fmt.Errorf("runtime.supported: unknown runtime %q (want docker or podman)", r))
-		}
-	}
-	for i, d := range m.Dependencies {
-		if !resource.IsDNSLabel(d.Name) {
-			errs = append(errs, fmt.Errorf("dependencies[%d].name: %q is not a valid DNS label", i, d.Name))
-		}
-		if _, err := semver.NewConstraint(d.Version); err != nil {
-			errs = append(errs, fmt.Errorf("dependencies[%d].version: %q is not a valid version constraint", i, d.Version))
+			errs = append(errs, fmt.Errorf("runtime.supported: unknown runtime %q (karga runs docker)", r))
 		}
 	}
 	return errors.Join(errs...)

@@ -115,6 +115,8 @@ func typed(s string, forceString bool) any {
 	case "false":
 		return false
 	}
+	// Only integers become numbers: decimals stay strings, so --set image.tag=7.4 is the tag "7.4".
+	// A number-typed decimal comes from a values file (-f).
 	// Leading zeros stay strings so "007" is not silently turned into 7.
 	if len(s) > 1 && (s[0] == '0' || strings.HasPrefix(s, "-0") || s[0] == '+') {
 		return s

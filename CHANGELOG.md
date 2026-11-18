@@ -41,6 +41,15 @@ repository, with its history.
   file) is refused when the package renders: karga stores and shows those specs, and protects
   only Secret values. Put it in a Secret and mount it.
 
+- The package format holds only what karga runs: `runtime.supported` accepts `docker` only, and
+  `dependencies` is gone from `Package.yaml` (a package with it is refused as an unknown field).
+- A request field or endpoint the server does not know is refused as `ErrIncompatible` ("upgrade
+  karga-server") instead of being ignored or reported as not found. `api.Version` is a constant.
+- Volume restore uploads are bounded (`Options.MaxRestore`, default 16 GiB).
+- Resources are checked more closely when decoded: image references, overlapping `mountPath`s,
+  `metadata.name`, `mountOptions` (not supported yet), memory below Docker's 6Mi minimum, and
+  quantities that are not plain decimals (`0x10p20`). `resource.DefaultCaps()` is a function.
+
 ### CI
 - `govulncheck`, and an API compatibility report against the latest release; GitHub Actions are
   pinned by commit.

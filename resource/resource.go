@@ -114,7 +114,11 @@ func Decode(doc []byte) (Resource, error) {
 		}
 	}
 	r.Spec.setDefaults()
-	if err := r.Spec.validate(); err != nil {
+	err = r.Spec.validate()
+	if !IsDNSLabel(r.Metadata.Name) {
+		err = errors.Join(fmt.Errorf("metadata.name: %q must be a DNS label (lowercase letters, digits and '-')", r.Metadata.Name), err)
+	}
+	if err != nil {
 		return Resource{}, fmt.Errorf("%s %q: %w", r.Kind, r.Metadata.Name, err)
 	}
 	return r, nil

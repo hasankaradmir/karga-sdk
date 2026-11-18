@@ -47,7 +47,7 @@ func TestLoadErrors(t *testing.T) {
 	}{
 		{empty, "Package.yaml not found"},
 		{"testdata/unknownfield", "field chart not found"},
-		{"testdata/withdeps", "dependencies are not supported"},
+		{"testdata/withdeps", "field dependencies not found"},
 		{linked, "only regular files"},
 		{"testdata/minimal/Package.yaml", "not a package directory or .tgz"},
 		{"testdata/missing", "no such file"},
