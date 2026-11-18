@@ -353,11 +353,13 @@ func (s *Server) volumeBackup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	force, err := strconv.ParseBool(cmp.Or(q.Get("force"), "false"))
-	req := VolumeRestoreRequest{Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name")}
+	confirmed, cerr := strconv.ParseBool(cmp.Or(q.Get("confirmed"), "false"))
+	err = errors.Join(err, cerr)
+	req := VolumeRestoreRequest{Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name"), Confirmed: confirmed}
 	if err == nil {
 		err = validate(req)
 	} else {
-		err = fmt.Errorf("%w: force: %w", ErrInvalid, err)
+		err = fmt.Errorf("%w: force, confirmed: %w", ErrInvalid, err)
 	}
 	if err != nil {
 		s.writeError(w, err)
