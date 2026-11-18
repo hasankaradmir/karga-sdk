@@ -106,7 +106,6 @@ func NewServer(b Backend, version string, opts Options) *Server {
 	s.mux.HandleFunc("POST /v1/exec", s.exec)
 	s.mux.HandleFunc("POST /v1/volume/backup", s.volumeBackup)
 	s.mux.HandleFunc("POST /v1/volume/restore", s.volumeRestore)
-	s.mux.HandleFunc("POST /v1/state/backup", s.stateBackup)
 	return s
 }
 
@@ -349,10 +348,6 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, struct{}{})
-}
-
-func (s *Server) stateBackup(w http.ResponseWriter, r *http.Request) {
-	streamed(w, "application/vnd.sqlite3", func(out io.Writer) error { return s.b.BackupState(r.Context(), out) })
 }
 
 // exec upgrades the connection and carries the command's streams as frames.

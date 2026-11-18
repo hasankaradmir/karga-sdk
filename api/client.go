@@ -288,11 +288,6 @@ func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r 
 	return resp.Body.Close()
 }
 
-// BackupState implements Backend.
-func (c *Client) BackupState(ctx context.Context, w io.Writer) error {
-	return c.download(ctx, "/v1/state/backup", struct{}{}, w)
-}
-
 // Gateway implements Backend.
 func (c *Client) Gateway(ctx context.Context) ([]Exposed, error) {
 	var out []Exposed

@@ -32,7 +32,6 @@ type Backend interface {
 	Exec(ctx context.Context, rel, workload string, opts ExecOptions) (int, error)
 	BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) error
 	RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error
-	BackupState(ctx context.Context, w io.Writer) error
 
 	Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error)
 	Pause(ctx context.Context, name string, paused bool) error

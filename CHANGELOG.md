@@ -45,6 +45,7 @@ repository, with its history.
   `dependencies` is gone from `Package.yaml` (a package with it is refused as an unknown field).
 - A request field or endpoint the server does not know is refused as `ErrIncompatible` ("upgrade
   karga-server") instead of being ignored or reported as not found. `api.Version` is a constant.
+- `Backend.BackupState` and `/v1/state/backup` are gone: karga-server keeps its state in files.
 - Volume restore uploads are bounded (`Options.MaxRestore`, default 16 GiB).
 - Resources are checked more closely when decoded: image references, overlapping `mountPath`s,
   `metadata.name`, `mountOptions` (not supported yet), memory below Docker's 6Mi minimum, and
