@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -196,6 +197,13 @@ func (m *Manifest) Resources() []resource.Resource {
 // Redacted replaces writeOnly and Secret values wherever karga shows or stores them.
 const Redacted = "<redacted>"
 
+// MaskValues returns a copy of vals with every value at paths (Manifest.SecretPaths, which may hold
+// values.Any for every key or element) replaced by Redacted, for storing or showing them.
+func MaskValues(vals map[string]any, paths [][]string) map[string]any {
+	out, _ := values.Mask(vals, paths, Redacted).(map[string]any)
+	return out
+}
+
 // Secrets returns every secret value of the manifest: writeOnly values and Secret resource values,
 // longest first so a secret containing another is masked whole.
 func (m *Manifest) Secrets() []string {
@@ -229,6 +237,12 @@ func (m *Manifest) Secrets() []string {
 			}
 		}
 	}
+	// A template may pass a secret through b64enc (a Kubernetes habit); its encoding is as secret.
+	for v := range maps.Clone(seen) {
+		if len(v) >= minWriteOnlyLen {
+			seen[base64.StdEncoding.EncodeToString([]byte(v))] = true
+		}
+	}
 	out := make([]string, 0, len(seen))
 	for v := range seen {
 		out = append(out, v)
@@ -252,8 +266,9 @@ func (m *Manifest) checkWriteOnly() error {
 			if !ok || len(sv) < minWriteOnlyLen {
 				continue
 			}
+			encoded := base64.StdEncoding.EncodeToString([]byte(sv))
 			for _, d := range m.Documents {
-				if d.Resource.Kind == resource.KindSecret || !strings.Contains(d.Content, sv) {
+				if d.Resource.Kind == resource.KindSecret || !strings.Contains(d.Content, sv) && !strings.Contains(d.Content, encoded) {
 					continue
 				}
 				errs = append(errs, fmt.Errorf("templates/%s: %s %q uses the writeOnly value %s: put it in a Secret and mount it, or pass it with a *_FILE variable",
@@ -266,11 +281,17 @@ func (m *Manifest) checkWriteOnly() error {
 
 // Redact replaces every secret value that occurs in s with Redacted.
 // shortcut: plain substring match, so a short secret also masks unrelated text that contains it.
-func (m *Manifest) Redact(s string) string {
-	for _, v := range m.Secrets() {
-		s = strings.ReplaceAll(s, v, Redacted)
+func (m *Manifest) Redact(s string) string { return m.redactor().Replace(s) }
+
+// redactor replaces every secret value with Redacted, longest first (Secrets' order) so a secret
+// containing another is masked whole.
+func (m *Manifest) redactor() *strings.Replacer {
+	secrets := m.Secrets()
+	pairs := make([]string, 0, 2*len(secrets))
+	for _, v := range secrets {
+		pairs = append(pairs, v, Redacted)
 	}
-	return s
+	return strings.NewReplacer(pairs...)
 }
 
 // RedactedDocuments returns the documents with every secret value replaced by Redacted: Secret
@@ -278,6 +299,7 @@ func (m *Manifest) Redact(s string) string {
 // they occur.
 func (m *Manifest) RedactedDocuments() ([]Document, error) {
 	out := make([]Document, len(m.Documents))
+	r := m.redactor()
 	for i, d := range m.Documents {
 		if s, ok := d.Resource.Spec.(*resource.SecretSpec); ok {
 			masked, err := maskSecret(d.Resource, s)
@@ -286,7 +308,7 @@ func (m *Manifest) RedactedDocuments() ([]Document, error) {
 			}
 			d.Content = masked
 		} else {
-			d.Content = m.Redact(d.Content)
+			d.Content = r.Replace(d.Content)
 		}
 		out[i] = d
 	}

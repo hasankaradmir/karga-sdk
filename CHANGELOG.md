@@ -7,6 +7,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- `packages.MaskValues` masks the values at secret paths, `*` (every key or element) included,
+  for code that stores or shows values.
 - `resource.Warnings`, `Manifest.Warnings`: what a package does that is allowed but worth knowing.
   A variable taken from a Secret (`environmentFrom`) is visible to anyone who can inspect the
   container. `packages.Lint` returns these warnings besides the problems.
@@ -46,6 +48,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   network past the gateway; a Volume any plugin. Networks are `bridge` and Volumes `local` now.
   Variable names may not hold control characters and file names of Configs and Secrets have at most
   255 bytes.
+- writeOnly values were missed under `contains`, `unevaluatedProperties`, `unevaluatedItems`,
+  `additionalItems`, draft-7 `dependencies` and anchor references (`"$ref": "#name"`); a value
+  passed through `b64enc` got into Configs and Workloads, and was not masked. Both walks of a schema
+  (secret paths and `--strict`) now know the same keywords.
 - Release names are checked by every request, not only when a package is rendered: a name like
   `../x` could reach a path on the server. `resource.ValidateReleaseName` also refuses `karga` and
   `karga-…`, whose runtime objects would take the names of karga's own.

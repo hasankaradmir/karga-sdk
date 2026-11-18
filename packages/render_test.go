@@ -205,9 +205,14 @@ func TestWriteOnlyOnlyInSecrets(t *testing.T) {
 	if err := m.checkWriteOnly(); err != nil {
 		t.Fatalf("a Secret may hold writeOnly values, short values are not looked for: %v", err)
 	}
-	m.Documents[1].Content = "env:\n  DB_PASSWORD: hunter22"
-	if err := m.checkWriteOnly(); err == nil || !strings.Contains(err.Error(), `Workload "web" uses the writeOnly value db.password`) {
-		t.Fatalf("want a refusal, got %v", err)
+	for _, content := range []string{"env:\n  DB_PASSWORD: hunter22", "files:\n  pw: aHVudGVyMjI="} { // as written, and through b64enc
+		m.Documents[1].Content = content
+		if err := m.checkWriteOnly(); err == nil || !strings.Contains(err.Error(), `Workload "web" uses the writeOnly value db.password`) {
+			t.Fatalf("%q: want a refusal, got %v", content, err)
+		}
+	}
+	if got := m.Redact("a hunter22 b aHVudGVyMjI= c"); got != "a <redacted> b <redacted> c" {
+		t.Fatalf("redact: %q", got)
 	}
 }
 
@@ -227,5 +232,25 @@ func TestRedactWriteOnlyEverywhere(t *testing.T) {
 	}
 	if m.Documents[0].Content == docs[0].Content {
 		t.Fatal("RedactedDocuments changed the manifest")
+	}
+}
+
+func TestMaskValues(t *testing.T) {
+	vals := map[string]any{
+		"db":    map[string]any{"password": "pw-123456", "user": "app"},
+		"users": map[string]any{"alice": map[string]any{"password": "alice-123456"}},
+		"keys":  []any{map[string]any{"token": "tok-123456"}, map[string]any{"token": nil}},
+	}
+	got := MaskValues(vals, [][]string{{"db", "password"}, {"users", "*", "password"}, {"keys", "*", "token"}, {"absent", "x"}})
+	want := map[string]any{
+		"db":    map[string]any{"password": Redacted, "user": "app"},
+		"users": map[string]any{"alice": map[string]any{"password": Redacted}},
+		"keys":  []any{map[string]any{"token": Redacted}, map[string]any{"token": nil}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("masked %v", got)
+	}
+	if vals["db"].(map[string]any)["password"] != "pw-123456" {
+		t.Fatal("the input was changed")
 	}
 }
