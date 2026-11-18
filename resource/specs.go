@@ -107,10 +107,11 @@ type Port struct {
 	Protocol      string `json:"protocol,omitempty"`
 }
 
-// PortNamed returns the port called name, or the port whose containerPort is the number in name.
-func (s *WorkloadSpec) PortNamed(name string) (Port, bool) {
+// TargetPort returns the port a Service's targetPort refers to: the port called ref, or the port
+// whose containerPort is the number in ref. (ServiceSpec.PortNamed finds a Service's port by name only.)
+func (s *WorkloadSpec) TargetPort(ref string) (Port, bool) {
 	for _, p := range s.Ports {
-		if p.Name == name || strconv.Itoa(p.ContainerPort) == name {
+		if p.Name == ref || strconv.Itoa(p.ContainerPort) == ref {
 			return p, true
 		}
 	}
@@ -246,6 +247,9 @@ var (
 
 var routeHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
+// Kind implements Spec.
+func (*WorkloadSpec) Kind() string { return KindWorkload }
+
 func (s *WorkloadSpec) setDefaults() {
 	if s.RestartPolicy == "" {
 		s.RestartPolicy = "always"
@@ -302,6 +306,12 @@ func (s *WorkloadSpec) setDefaults() {
 }
 
 func (s *WorkloadSpec) validate() error {
+	return errors.Join(s.validateImage(), s.validateEnvironment(), s.validatePorts(), s.validateMounts(), s.validateDependsOn(),
+		s.validateStopTimeout(), s.UpdateStrategy.validate(), s.HealthCheck.validate(s.Ports), s.Resources.validate(),
+		s.Security.validate(), s.Logging.validate())
+}
+
+func (s *WorkloadSpec) validateImage() error {
 	var errs []error
 	switch {
 	case s.Image == "":
@@ -315,6 +325,11 @@ func (s *WorkloadSpec) validate() error {
 	if !pullPolicies[s.PullPolicy] {
 		errs = append(errs, fmt.Errorf("spec.pullPolicy: %q must be one of always, if-not-present, never", s.PullPolicy))
 	}
+	return errors.Join(errs...)
+}
+
+func (s *WorkloadSpec) validateEnvironment() error {
+	var errs []error
 	for k := range s.Environment {
 		if !validEnvName(k) {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
@@ -334,6 +349,11 @@ func (s *WorkloadSpec) validate() error {
 			errs = append(errs, fmt.Errorf("%s: secret and key are required", at))
 		}
 	}
+	return errors.Join(errs...)
+}
+
+func (s *WorkloadSpec) validatePorts() error {
+	var errs []error
 	names := map[string]bool{}
 	for i, p := range s.Ports {
 		if !IsDNSLabel(p.Name) {
@@ -350,6 +370,11 @@ func (s *WorkloadSpec) validate() error {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].protocol: %q must be tcp or udp", i, p.Protocol))
 		}
 	}
+	return errors.Join(errs...)
+}
+
+func (s *WorkloadSpec) validateMounts() error {
+	var errs []error
 	for i, m := range s.Mounts {
 		set := 0
 		for _, v := range []string{m.Volume, m.Config, m.Secret} {
@@ -370,6 +395,11 @@ func (s *WorkloadSpec) validate() error {
 			}
 		}
 	}
+	return errors.Join(errs...)
+}
+
+func (s *WorkloadSpec) validateDependsOn() error {
+	var errs []error
 	for i, d := range s.DependsOn {
 		if !IsDNSLabel(d) {
 			errs = append(errs, fmt.Errorf("spec.dependsOn[%d]: %q must name a Service", i, d))
@@ -378,88 +408,124 @@ func (s *WorkloadSpec) validate() error {
 			errs = append(errs, fmt.Errorf("spec.dependsOn[%d]: %q is listed twice", i, d))
 		}
 	}
-	if s.StopTimeout != "" {
-		if d, err := time.ParseDuration(s.StopTimeout); err != nil || d < time.Second || d > MaxStopTimeout {
-			errs = append(errs, fmt.Errorf("spec.stopTimeout: %q must be a duration from 1s to %s", s.StopTimeout, MaxStopTimeout))
+	return errors.Join(errs...)
+}
+
+func (s *WorkloadSpec) validateStopTimeout() error {
+	if s.StopTimeout == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(s.StopTimeout); err != nil || d < time.Second || d > MaxStopTimeout {
+		return fmt.Errorf("spec.stopTimeout: %q must be a duration from 1s to %s", s.StopTimeout, MaxStopTimeout)
+	}
+	return nil
+}
+
+func (u *UpdateStrategy) validate() error {
+	if u == nil {
+		return nil
+	}
+	var errs []error
+	if u.Type != "" && u.Type != StrategyRecreate && u.Type != StrategyReplace {
+		errs = append(errs, fmt.Errorf("spec.updateStrategy.type: %q must be recreate or replace", u.Type))
+	}
+	if u.DrainTimeout != "" {
+		if d, err := time.ParseDuration(u.DrainTimeout); err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("spec.updateStrategy.drainTimeout: %q is not a positive duration", u.DrainTimeout))
 		}
 	}
-	if u := s.UpdateStrategy; u != nil {
-		if u.Type != "" && u.Type != StrategyRecreate && u.Type != StrategyReplace {
-			errs = append(errs, fmt.Errorf("spec.updateStrategy.type: %q must be recreate or replace", u.Type))
+	return errors.Join(errs...)
+}
+
+// validate checks the health check of a workload with ports.
+func (hc *HealthCheck) validate(ports []Port) error {
+	if hc == nil {
+		return nil
+	}
+	var errs []error
+	switch hc.Type {
+	case HealthExec:
+		if len(hc.Command) == 0 {
+			errs = append(errs, errors.New("spec.healthCheck.command is required"))
 		}
-		if u.DrainTimeout != "" {
-			if d, err := time.ParseDuration(u.DrainTimeout); err != nil || d <= 0 {
-				errs = append(errs, fmt.Errorf("spec.updateStrategy.drainTimeout: %q is not a positive duration", u.DrainTimeout))
+	case HealthTCP, HealthHTTP:
+		if len(hc.Command) > 0 {
+			errs = append(errs, fmt.Errorf("spec.healthCheck.command: not used by type %s", hc.Type))
+		}
+		if !slices.ContainsFunc(ports, func(p Port) bool { return p.ContainerPort == hc.Port && p.Protocol == "tcp" }) {
+			errs = append(errs, fmt.Errorf("spec.healthCheck.port: %d is not a tcp containerPort of the workload", hc.Port))
+		}
+		if hc.Type == HealthHTTP && !strings.HasPrefix(hc.Path, "/") {
+			errs = append(errs, fmt.Errorf("spec.healthCheck.path: %q must start with /", hc.Path))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("spec.healthCheck.type: %q is not supported (want exec, tcp or http)", hc.Type))
+	}
+	for name, d := range map[string]string{"interval": hc.Interval, "timeout": hc.Timeout, "startPeriod": hc.StartPeriod} {
+		if d == "" {
+			continue
+		}
+		if v, err := time.ParseDuration(d); err != nil || v <= 0 {
+			errs = append(errs, fmt.Errorf("spec.healthCheck.%s: %q is not a positive duration", name, d))
+		}
+	}
+	if hc.Retries < 0 {
+		errs = append(errs, errors.New("spec.healthCheck.retries must not be negative"))
+	}
+	return errors.Join(errs...)
+}
+
+func (r *Resources) validate() error {
+	if r == nil {
+		return nil
+	}
+	var errs []error
+	if r.Memory != "" {
+		if n, err := ParseMemory(string(r.Memory)); err != nil {
+			errs = append(errs, fmt.Errorf("spec.resources.memory: %w", err))
+		} else if n < minMemory {
+			errs = append(errs, fmt.Errorf("spec.resources.memory: %q is below Docker's minimum of 6Mi", r.Memory))
+		}
+	}
+	if r.CPU != "" {
+		if _, err := ParseCPU(string(r.CPU)); err != nil {
+			errs = append(errs, fmt.Errorf("spec.resources.cpu: %w", err))
+		}
+	}
+	if r.Pids != nil && *r.Pids < 0 {
+		errs = append(errs, fmt.Errorf("spec.resources.pids: %d must be 0 (no limit) or positive", *r.Pids))
+	}
+	return errors.Join(errs...)
+}
+
+func (sec *Security) validate() error {
+	if sec == nil {
+		return nil
+	}
+	var errs []error
+	for field, caps := range map[string][]string{"capDrop": sec.CapDrop, "capAdd": sec.CapAdd} {
+		for _, c := range caps {
+			if !capability.MatchString(c) {
+				errs = append(errs, fmt.Errorf("spec.security.%s: %q is not a capability name", field, c))
 			}
 		}
 	}
-	if hc := s.HealthCheck; hc != nil {
-		switch hc.Type {
-		case HealthExec:
-			if len(hc.Command) == 0 {
-				errs = append(errs, errors.New("spec.healthCheck.command is required"))
-			}
-		case HealthTCP, HealthHTTP:
-			if len(hc.Command) > 0 {
-				errs = append(errs, fmt.Errorf("spec.healthCheck.command: not used by type %s", hc.Type))
-			}
-			if !slices.ContainsFunc(s.Ports, func(p Port) bool { return p.ContainerPort == hc.Port && p.Protocol == "tcp" }) {
-				errs = append(errs, fmt.Errorf("spec.healthCheck.port: %d is not a tcp containerPort of the workload", hc.Port))
-			}
-			if hc.Type == HealthHTTP && !strings.HasPrefix(hc.Path, "/") {
-				errs = append(errs, fmt.Errorf("spec.healthCheck.path: %q must start with /", hc.Path))
-			}
-		default:
-			errs = append(errs, fmt.Errorf("spec.healthCheck.type: %q is not supported (want exec, tcp or http)", hc.Type))
-		}
-		for name, d := range map[string]string{"interval": hc.Interval, "timeout": hc.Timeout, "startPeriod": hc.StartPeriod} {
-			if d == "" {
-				continue
-			}
-			if v, err := time.ParseDuration(d); err != nil || v <= 0 {
-				errs = append(errs, fmt.Errorf("spec.healthCheck.%s: %q is not a positive duration", name, d))
-			}
-		}
-		if hc.Retries < 0 {
-			errs = append(errs, errors.New("spec.healthCheck.retries must not be negative"))
-		}
+	if sec.User != "" && !userSpec.MatchString(sec.User) {
+		errs = append(errs, fmt.Errorf("spec.security.user: %q must be uid[:gid] or a user name", sec.User))
 	}
-	if r := s.Resources; r != nil {
-		if r.Memory != "" {
-			if n, err := ParseMemory(string(r.Memory)); err != nil {
-				errs = append(errs, fmt.Errorf("spec.resources.memory: %w", err))
-			} else if n < minMemory {
-				errs = append(errs, fmt.Errorf("spec.resources.memory: %q is below Docker's minimum of 6Mi", r.Memory))
-			}
-		}
-		if r.CPU != "" {
-			if _, err := ParseCPU(string(r.CPU)); err != nil {
-				errs = append(errs, fmt.Errorf("spec.resources.cpu: %w", err))
-			}
-		}
-		if r.Pids != nil && *r.Pids < 0 {
-			errs = append(errs, fmt.Errorf("spec.resources.pids: %d must be 0 (no limit) or positive", *r.Pids))
-		}
+	return errors.Join(errs...)
+}
+
+func (l *Logging) validate() error {
+	if l == nil {
+		return nil
 	}
-	if sec := s.Security; sec != nil {
-		for field, caps := range map[string][]string{"capDrop": sec.CapDrop, "capAdd": sec.CapAdd} {
-			for _, c := range caps {
-				if !capability.MatchString(c) {
-					errs = append(errs, fmt.Errorf("spec.security.%s: %q is not a capability name", field, c))
-				}
-			}
-		}
-		if sec.User != "" && !userSpec.MatchString(sec.User) {
-			errs = append(errs, fmt.Errorf("spec.security.user: %q must be uid[:gid] or a user name", sec.User))
-		}
+	var errs []error
+	if !logSize.MatchString(l.MaxSize) {
+		errs = append(errs, fmt.Errorf("spec.logging.maxSize: %q must be a size like 10m (k, m or g)", l.MaxSize))
 	}
-	if l := s.Logging; l != nil {
-		if !logSize.MatchString(l.MaxSize) {
-			errs = append(errs, fmt.Errorf("spec.logging.maxSize: %q must be a size like 10m (k, m or g)", l.MaxSize))
-		}
-		if l.MaxFiles < 1 {
-			errs = append(errs, fmt.Errorf("spec.logging.maxFiles: %d must be at least 1", l.MaxFiles))
-		}
+	if l.MaxFiles < 1 {
+		errs = append(errs, fmt.Errorf("spec.logging.maxFiles: %d must be at least 1", l.MaxFiles))
 	}
 	return errors.Join(errs...)
 }
@@ -471,6 +537,9 @@ type VolumeSpec struct {
 	// Retention decides what uninstall does: retain (default) or delete.
 	Retention string `json:"retention,omitempty"`
 }
+
+// Kind implements Spec.
+func (*VolumeSpec) Kind() string { return KindVolume }
 
 func (s *VolumeSpec) setDefaults() {
 	if s.Driver == "" {
@@ -502,6 +571,9 @@ type NetworkSpec struct {
 	Internal bool   `json:"internal,omitempty"`
 }
 
+// Kind implements Spec.
+func (*NetworkSpec) Kind() string { return KindNetwork }
+
 func (s *NetworkSpec) setDefaults() {
 	if s.Driver == "" {
 		s.Driver = "bridge"
@@ -522,6 +594,9 @@ type ConfigSpec struct {
 	Files map[string]string `json:"files"`
 }
 
+// Kind implements Spec.
+func (*ConfigSpec) Kind() string { return KindConfig }
+
 func (s *ConfigSpec) setDefaults() {}
 
 func (s *ConfigSpec) validate() error { return validateFileNames("spec.files", s.Files) }
@@ -530,6 +605,9 @@ func (s *ConfigSpec) validate() error { return validateFileNames("spec.files", s
 type SecretSpec struct {
 	Values map[string]string `json:"values"`
 }
+
+// Kind implements Spec.
+func (*SecretSpec) Kind() string { return KindSecret }
 
 func (s *SecretSpec) setDefaults() {}
 

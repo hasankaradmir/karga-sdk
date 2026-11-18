@@ -31,6 +31,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
     is `/v1/gateway/access-log`, `/v1/gateway/listen`, `/v1/gateway/listeners/add` and
     `/v1/gateway/listeners/remove`.
   - `ErrNotRunning`, `ErrDetached` and `ErrDisconnected` are declared with the other errors.
+- `resource.Resource.Spec` has the exported type `resource.Spec` (with `Kind()`), which only the
+  package implements. `WorkloadSpec.PortNamed` is `TargetPort`: it also matches a port number,
+  unlike `ServiceSpec.PortNamed`.
   - The words of a status report are constants (`DesiredApplied`, `ActualMissing`,
     `HealthStarting`, …, and `RevisionSuperseded`), and `StatusReport.Healthy` is the rule `karga
     status` exits 6 by. `ValidateStrategy` checks a `--strategy`; upgrade and rollback requests

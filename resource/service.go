@@ -52,6 +52,10 @@ const (
 // HTTP reports whether the exposure is a route (selected by host and path) rather than a tcp port.
 func (e Exposure) HTTP() bool { return e.Host != "" }
 
+// route is what an exposure takes on its listener: the host and path of an HTTP route, nothing
+// for a TCP listener. Two exposures of a listener may not take the same route.
+func (e Exposure) route() string { return e.Host + e.Path }
+
 // PortNamed returns the service port called name.
 func (s *ServiceSpec) PortNamed(name string) (ServicePort, bool) {
 	i := slices.IndexFunc(s.Ports, func(p ServicePort) bool { return p.Name == name })
@@ -71,6 +75,9 @@ func (s *ServiceSpec) TLSSecrets() []string {
 	}
 	return out
 }
+
+// Kind implements Spec.
+func (*ServiceSpec) Kind() string { return KindService }
 
 func (s *ServiceSpec) setDefaults() {
 	for i := range s.Ports {
@@ -137,9 +144,9 @@ func (s *ServiceSpec) validate() error {
 		if e.TLS != nil && !IsDNSLabel(e.TLS.Secret) {
 			errs = append(errs, fmt.Errorf("%s.tls.secret: %q must name a Secret", at, e.TLS.Secret))
 		}
-		key := e.Listener + " " + e.Host + e.Path
+		key := e.Listener + " " + e.route()
 		if seen[key] {
-			errs = append(errs, fmt.Errorf("%s: listener %s already serves %s", at, e.Listener, strings.TrimSpace(e.Host+e.Path)))
+			errs = append(errs, fmt.Errorf("%s: listener %s already serves %s", at, e.Listener, e.route()))
 		}
 		seen[key] = true
 	}

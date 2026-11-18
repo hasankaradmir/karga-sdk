@@ -36,10 +36,14 @@ type Resource struct {
 	APIVersion string   `json:"apiVersion"`
 	Kind       string   `json:"kind"`
 	Metadata   Metadata `json:"metadata"`
-	Spec       spec     `json:"spec"`
+	Spec       Spec     `json:"spec"`
 }
 
-type spec interface {
+// Spec is the spec of one kind of resource. Only this package implements it: a new kind is a new
+// Spec type added to specs, and its validation and defaults live with it.
+type Spec interface {
+	// Kind is the kind the spec belongs to (KindWorkload, …).
+	Kind() string
 	validate() error
 	setDefaults()
 }
@@ -50,18 +54,58 @@ const ReservedPrefix = "karga-"
 // ErrEmpty is returned by Decode for a document with no content (e.g. a template wrapped in a false if).
 var ErrEmpty = errors.New("empty document")
 
-var newSpec = map[string]func() spec{
-	KindWorkload: func() spec { return &WorkloadSpec{} },
-	KindVolume:   func() spec { return &VolumeSpec{} },
-	KindNetwork:  func() spec { return &NetworkSpec{} },
-	KindConfig:   func() spec { return &ConfigSpec{} },
-	KindSecret:   func() spec { return &SecretSpec{} },
-	KindService:  func() spec { return &ServiceSpec{} },
+// specs makes a new, empty Spec of every kind.
+var specs = []func() Spec{
+	func() Spec { return &WorkloadSpec{} },
+	func() Spec { return &VolumeSpec{} },
+	func() Spec { return &NetworkSpec{} },
+	func() Spec { return &ConfigSpec{} },
+	func() Spec { return &SecretSpec{} },
+	func() Spec { return &ServiceSpec{} },
 }
 
-// moved names Workload fields that exposure moved to Services, for a clearer decode error.
+// newSpec makes a new, empty Spec by kind.
+var newSpec = func() map[string]func() Spec {
+	m := map[string]func() Spec{}
+	for _, mk := range specs {
+		m[mk().Kind()] = mk
+	}
+	return m
+}()
+
+// moved names fields of Workload ports that exposure moved to Services, for a clearer decode error.
 var moved = []string{"hostPort", "hostIP", "routes"}
 
+// header is a document before its spec is decoded.
+type header struct {
+	APIVersion string          `json:"apiVersion"`
+	Kind       string          `json:"kind"`
+	Metadata   Metadata        `json:"metadata"`
+	Spec       json.RawMessage `json:"spec"`
+}
+
+// noSpec reports whether the document has no spec.
+func (h header) noSpec() bool { return len(h.Spec) == 0 || string(h.Spec) == "null" }
+
+// movedField returns the first field of a Workload's raw spec ports that exposure moved to Services.
+func movedField(spec json.RawMessage) string {
+	var w struct {
+		Ports []map[string]json.RawMessage `json:"ports"`
+	}
+	if json.Unmarshal(spec, &w) != nil {
+		return ""
+	}
+	for _, p := range w.Ports {
+		for _, f := range moved {
+			if _, ok := p[f]; ok {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
+// kinds lists the kinds Decode knows, for messages.
 func kinds() string {
 	ks := make([]string, 0, len(newSpec))
 	for k := range newSpec {
@@ -85,12 +129,7 @@ func Decode(doc []byte) (Resource, error) {
 	if err != nil {
 		return Resource{}, fmt.Errorf("document is not JSON-compatible (map keys must be strings): %w", err)
 	}
-	var h struct {
-		APIVersion string          `json:"apiVersion"`
-		Kind       string          `json:"kind"`
-		Metadata   Metadata        `json:"metadata"`
-		Spec       json.RawMessage `json:"spec"`
-	}
+	var h header
 	if err := strictJSON(js, &h); err != nil {
 		return Resource{}, err
 	}
@@ -102,13 +141,10 @@ func Decode(doc []byte) (Resource, error) {
 		return Resource{}, fmt.Errorf("kind: unknown kind %q (supported: %s)", h.Kind, kinds())
 	}
 	r := Resource{APIVersion: h.APIVersion, Kind: h.Kind, Metadata: h.Metadata, Spec: mk()}
-	if len(h.Spec) > 0 && string(h.Spec) != "null" {
+	if !h.noSpec() {
 		if err := strictJSON(h.Spec, r.Spec); err != nil {
-			for _, f := range moved {
-				if r.Kind == KindWorkload && strings.Contains(err.Error(), fmt.Sprintf("unknown field %q", f)) {
-					err = fmt.Errorf("%w: a Workload no longer exposes ports; a Service does (see USAGE.md, \"Expose services\")", err)
-					break
-				}
+			if f := movedField(h.Spec); r.Kind == KindWorkload && f != "" {
+				err = fmt.Errorf("%w: a Workload's ports no longer take %s; a Service does (see the karga CLI's USAGE.md, \"Expose services\")", err, f)
 			}
 			return Resource{}, fmt.Errorf("%s %q: spec: %w", r.Kind, r.Metadata.Name, err)
 		}
@@ -127,12 +163,7 @@ func Decode(doc []byte) (Resource, error) {
 // DecodeStored parses a spec karga stored itself (JSON, already validated when it was applied).
 // Fields an older karga wrote and this one no longer knows are ignored, so old state stays readable.
 func DecodeStored(doc []byte) (Resource, error) {
-	var h struct {
-		APIVersion string          `json:"apiVersion"`
-		Kind       string          `json:"kind"`
-		Metadata   Metadata        `json:"metadata"`
-		Spec       json.RawMessage `json:"spec"`
-	}
+	var h header
 	if err := json.Unmarshal(doc, &h); err != nil {
 		return Resource{}, err
 	}
@@ -141,7 +172,7 @@ func DecodeStored(doc []byte) (Resource, error) {
 		return Resource{}, fmt.Errorf("kind: unknown kind %q", h.Kind)
 	}
 	r := Resource{APIVersion: h.APIVersion, Kind: h.Kind, Metadata: h.Metadata, Spec: mk()}
-	if len(h.Spec) > 0 && string(h.Spec) != "null" {
+	if !h.noSpec() {
 		if err := json.Unmarshal(h.Spec, r.Spec); err != nil {
 			return Resource{}, fmt.Errorf("%s %q: spec: %w", r.Kind, r.Metadata.Name, err)
 		}
@@ -175,8 +206,14 @@ func Warnings(rs []Resource) []string {
 // ValidateSet checks rules that span resources: names, uniqueness, references, and the ports and
 // exposures of Services.
 func ValidateSet(rs []Resource) error {
+	defined, err := checkNames(rs)
+	return errors.Join(err, checkWorkloadRefs(rs, defined), checkServices(rs))
+}
+
+// checkNames checks that names are valid, not karga's, and unique per kind; it returns them by kind.
+func checkNames(rs []Resource) (map[string]map[string]bool, error) {
 	var errs []error
-	seen := map[string]map[string]bool{}
+	defined := map[string]map[string]bool{}
 	for _, r := range rs {
 		if !IsDNSLabel(r.Metadata.Name) {
 			errs = append(errs, fmt.Errorf("%s %q: metadata.name must be a DNS label", r.Kind, r.Metadata.Name))
@@ -184,26 +221,29 @@ func ValidateSet(rs []Resource) error {
 		if strings.HasPrefix(r.Metadata.Name, ReservedPrefix) {
 			errs = append(errs, fmt.Errorf("%s %q: names starting with %q are reserved for karga", r.Kind, r.Metadata.Name, ReservedPrefix))
 		}
-		if seen[r.Kind] == nil {
-			seen[r.Kind] = map[string]bool{}
+		if defined[r.Kind] == nil {
+			defined[r.Kind] = map[string]bool{}
 		}
-		if seen[r.Kind][r.Metadata.Name] {
+		if defined[r.Kind][r.Metadata.Name] {
 			errs = append(errs, fmt.Errorf("%s %q: defined more than once", r.Kind, r.Metadata.Name))
 		}
-		seen[r.Kind][r.Metadata.Name] = true
+		defined[r.Kind][r.Metadata.Name] = true
 	}
+	return defined, errors.Join(errs...)
+}
 
-	workloads := map[string]*WorkloadSpec{}
+// checkWorkloadRefs checks that what workloads mount, join, depend on and take variables from is defined.
+func checkWorkloadRefs(rs []Resource, defined map[string]map[string]bool) error {
+	var errs []error
 	for _, r := range rs {
 		w, ok := r.Spec.(*WorkloadSpec)
 		if !ok {
 			continue
 		}
-		workloads[r.Metadata.Name] = w
+		at := fmt.Sprintf("%s %q", KindWorkload, r.Metadata.Name)
 		for _, m := range w.Mounts {
-			kind, name := m.Target()
-			if !seen[kind][name] {
-				errs = append(errs, fmt.Errorf("%s %q: mount %s: %s %q is not defined", KindWorkload, r.Metadata.Name, m.MountPath, kind, name))
+			if kind, name := m.Target(); !defined[kind][name] {
+				errs = append(errs, fmt.Errorf("%s: mount %s: %s %q is not defined", at, m.MountPath, kind, name))
 			}
 		}
 		for _, e := range w.EnvironmentFrom {
@@ -211,25 +251,36 @@ func ValidateSet(rs []Resource) error {
 				continue // reported by the workload's own validation
 			}
 			if sec := secretSpec(rs, e.Secret); sec == nil {
-				errs = append(errs, fmt.Errorf("%s %q: environmentFrom %s: Secret %q is not defined", KindWorkload, r.Metadata.Name, e.Name, e.Secret))
+				errs = append(errs, fmt.Errorf("%s: environmentFrom %s: Secret %q is not defined", at, e.Name, e.Secret))
 			} else if _, ok := sec.Values[e.Key]; !ok {
-				errs = append(errs, fmt.Errorf("%s %q: environmentFrom %s: Secret %q has no key %q", KindWorkload, r.Metadata.Name, e.Name, e.Secret, e.Key))
+				errs = append(errs, fmt.Errorf("%s: environmentFrom %s: Secret %q has no key %q", at, e.Name, e.Secret, e.Key))
 			}
 		}
 		for _, n := range w.Networks {
-			if !seen[KindNetwork][n] {
-				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))
+			if !defined[KindNetwork][n] {
+				errs = append(errs, fmt.Errorf("%s: network %q is not defined", at, n))
 			}
 		}
 		for _, d := range w.DependsOn {
-			if !seen[KindService][d] {
-				errs = append(errs, fmt.Errorf("%s %q: dependsOn: Service %q is not defined", KindWorkload, r.Metadata.Name, d))
+			if !defined[KindService][d] {
+				errs = append(errs, fmt.Errorf("%s: dependsOn: Service %q is not defined", at, d))
 			}
 		}
 	}
+	return errors.Join(errs...)
+}
 
-	// One release proxy serves every Service of the release on one address, so a port number
-	// belongs to one Service; a listener's host and path belong to one Service too.
+// checkServices checks Services against their workloads and each other. One release proxy serves
+// every Service of the release on one address, so a port number belongs to one Service; a
+// listener's route belongs to one Service too.
+func checkServices(rs []Resource) error {
+	workloads := map[string]*WorkloadSpec{}
+	for _, r := range rs {
+		if w, ok := r.Spec.(*WorkloadSpec); ok {
+			workloads[r.Metadata.Name] = w
+		}
+	}
+	var errs []error
 	ports, exposed := map[int]string{}, map[string]string{}
 	for _, r := range rs {
 		s, ok := r.Spec.(*ServiceSpec)
@@ -246,7 +297,7 @@ func ValidateSet(rs []Resource) error {
 		}
 		for _, p := range s.Ports {
 			if w != nil {
-				if wp, ok := w.PortNamed(p.TargetPort); !ok {
+				if wp, ok := w.TargetPort(p.TargetPort); !ok {
 					errs = append(errs, fmt.Errorf("%s: port %s: targetPort %q is not a port of workload %q", at, p.Name, p.TargetPort, s.Workload))
 				} else if wp.Protocol != "tcp" {
 					errs = append(errs, fmt.Errorf("%s: port %s: targetPort %q is %s; services carry tcp only", at, p.Name, p.TargetPort, wp.Protocol))
@@ -258,9 +309,9 @@ func ValidateSet(rs []Resource) error {
 			ports[p.Port] = r.Metadata.Name
 		}
 		for _, e := range s.Expose {
-			key := e.Listener + " " + e.Host + e.Path
+			key := e.Listener + " " + e.route()
 			if other, dup := exposed[key]; dup && other != r.Metadata.Name {
-				errs = append(errs, fmt.Errorf("%s: listener %s %s is already used by %s %q", at, e.Listener, e.Host+e.Path, KindService, other))
+				errs = append(errs, fmt.Errorf("%s: listener %s %s is already used by %s %q", at, e.Listener, e.route(), KindService, other))
 			}
 			exposed[key] = r.Metadata.Name
 		}
