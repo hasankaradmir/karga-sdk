@@ -7,6 +7,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- `resource.Warnings`, `Manifest.Warnings`: what a package does that is allowed but worth knowing.
+  A variable taken from a Secret (`environmentFrom`) is visible to anyone who can inspect the
+  container. `packages.Lint` returns these warnings besides the problems.
+
 - `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
   `ValidateSet` checks the Secret and the key exist.
 - `api/apitest`: `Serve` runs an `api.Backend` behind the real HTTP handler on a unix socket, for
@@ -35,6 +39,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- A Network could use any driver Docker has (`macvlan`, `ipvlan`), putting containers on the host's
+  network past the gateway; a Volume any plugin. Networks are `bridge` and Volumes `local` now.
+  Variable names may not hold control characters and file names of Configs and Secrets have at most
+  255 bytes.
 - Release names are checked by every request, not only when a package is rendered: a name like
   `../x` could reach a path on the server. `resource.ValidateReleaseName` also refuses `karga` and
   `karga-…`, whose runtime objects would take the names of karga's own.

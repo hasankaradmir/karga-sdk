@@ -124,14 +124,14 @@ func TestRedactedDocuments(t *testing.T) {
 }
 
 func TestLint(t *testing.T) {
-	if issues := Lint("testdata/demo", Options{}); issues != nil {
+	if issues, _ := Lint("testdata/demo", Options{}); issues != nil {
 		t.Fatalf("demo should lint clean: %v", issues)
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Package.yaml"), []byte("apiVersion: v1\nname: Bad\nversion: x\nruntime: {supported: []}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	issues := Lint(dir, Options{})
+	issues, _ := Lint(dir, Options{})
 	if len(issues) != 4 {
 		t.Fatalf("want 4 separate issues, got %d: %q", len(issues), issues)
 	}

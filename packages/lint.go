@@ -8,19 +8,21 @@ import (
 // LintReleaseName is the release name used when lint renders a package.
 const LintReleaseName = "lint"
 
-// Lint loads and renders the package at path and returns every problem found.
-func Lint(path string, opts Options) []string {
+// Lint loads and renders the package at path and returns every problem found, and the warnings of
+// a package without problems (Manifest.Warnings).
+func Lint(path string, opts Options) (problems, warnings []string) {
 	p, err := Load(path)
 	if err != nil {
-		return flatten(err)
+		return flatten(err), nil
 	}
 	if opts.ReleaseName == "" {
 		opts.ReleaseName = LintReleaseName
 	}
-	if _, err := Render(p, opts); err != nil {
-		return flatten(err)
+	m, err := Render(p, opts)
+	if err != nil {
+		return flatten(err), nil
 	}
-	return nil
+	return nil, m.Warnings()
 }
 
 // flatten turns an errors.Join into one message per joined error.

@@ -181,6 +181,9 @@ func Overrides(opts Options) (map[string]any, error) {
 	return values.Overlay(vals, sets), nil
 }
 
+// Warnings lists what the manifest does that is allowed but worth knowing (resource.Warnings).
+func (m *Manifest) Warnings() []string { return resource.Warnings(m.Resources()) }
+
 // Resources returns the decoded resources of the manifest in document order.
 func (m *Manifest) Resources() []resource.Resource {
 	rs := make([]resource.Resource, len(m.Documents))

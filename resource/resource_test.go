@@ -355,3 +355,40 @@ func TestValidateReleaseName(t *testing.T) {
 		}
 	}
 }
+
+func TestWarnings(t *testing.T) {
+	w := mustDecode(t, `
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: api}
+spec:
+  image: postgrest/postgrest:v12
+  environmentFrom:
+    - {name: PGRST_DB_URI, secret: db, key: uri}
+`)
+	got := Warnings([]Resource{w, mustDecode(t, workloadDoc)})
+	if len(got) != 1 || !strings.Contains(got[0], `"api" sets PGRST_DB_URI from Secret "db"`) || !strings.Contains(got[0], "docker inspect") {
+		t.Fatalf("warnings: %q", got)
+	}
+}
+
+func TestDriversAndNames(t *testing.T) {
+	head := "apiVersion: karga.io/v1alpha1\nmetadata: {name: x}\n"
+	for doc, want := range map[string]string{
+		head + "kind: Network\nspec: {driver: macvlan}\n":                                `"macvlan" is not supported`,
+		head + "kind: Network\nspec: {driver: host}\n":                                   `"host" is not supported`,
+		head + "kind: Volume\nspec: {driver: nfs}\n":                                     `"nfs" is not supported`,
+		head + "kind: Workload\nspec: {image: redis, environment: {\"A\\u0000B\": x}}\n": "invalid variable name",
+		head + "kind: Config\nspec: {files: {\"a\\nb\": x}}\n":                           "not a valid file name",
+		head + "kind: Secret\nspec: {values: {" + strings.Repeat("a", 256) + ": x}}\n":   "not a valid file name",
+	} {
+		if _, err := Decode([]byte(doc)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %q", doc, err, want)
+		}
+	}
+	for _, doc := range []string{head + "kind: Network\nspec: {}\n", head + "kind: Volume\nspec: {driver: local}\n"} {
+		if _, err := Decode([]byte(doc)); err != nil {
+			t.Errorf("%q: %v", doc, err)
+		}
+	}
+}

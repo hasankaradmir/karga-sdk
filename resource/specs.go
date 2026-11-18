@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // WorkloadSpec runs one container. Replicas are intentionally unsupported.
@@ -315,7 +316,7 @@ func (s *WorkloadSpec) validate() error {
 		errs = append(errs, fmt.Errorf("spec.pullPolicy: %q must be one of always, if-not-present, never", s.PullPolicy))
 	}
 	for k := range s.Environment {
-		if k == "" || strings.Contains(k, "=") {
+		if !validEnvName(k) {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
 		}
 	}
@@ -323,7 +324,7 @@ func (s *WorkloadSpec) validate() error {
 	for i, e := range s.EnvironmentFrom {
 		at := fmt.Sprintf("spec.environmentFrom[%d]", i)
 		switch _, inEnv := s.Environment[e.Name]; {
-		case e.Name == "" || strings.Contains(e.Name, "="):
+		case !validEnvName(e.Name):
 			errs = append(errs, fmt.Errorf("%s.name: invalid variable name %q", at, e.Name))
 		case inEnv || fromNames[e.Name]:
 			errs = append(errs, fmt.Errorf("%s.name: %q is set twice", at, e.Name))
@@ -482,6 +483,10 @@ func (s *VolumeSpec) setDefaults() {
 
 func (s *VolumeSpec) validate() error {
 	var errs []error
+	// A volume plugin is the host's to choose: a package could mount host paths or remote storage.
+	if s.Driver != "local" {
+		errs = append(errs, fmt.Errorf("spec.driver: %q is not supported (local)", s.Driver))
+	}
 	if s.Retention != "retain" && s.Retention != "delete" {
 		errs = append(errs, fmt.Errorf("spec.retention: %q must be retain or delete", s.Retention))
 	}
@@ -503,7 +508,14 @@ func (s *NetworkSpec) setDefaults() {
 	}
 }
 
-func (s *NetworkSpec) validate() error { return nil }
+// A package's networks are bridges: other drivers (macvlan, ipvlan, host) put containers on the
+// host's network, past the gateway, which packages may not reach.
+func (s *NetworkSpec) validate() error {
+	if s.Driver != "bridge" {
+		return fmt.Errorf("spec.driver: %q is not supported (bridge)", s.Driver)
+	}
+	return nil
+}
 
 // ConfigSpec holds configuration files mounted read-only.
 type ConfigSpec struct {
@@ -523,6 +535,12 @@ func (s *SecretSpec) setDefaults() {}
 
 func (s *SecretSpec) validate() error { return validateFileNames("spec.values", s.Values) }
 
+// validEnvName reports whether name can be a variable of a container's environment: not empty,
+// without "=", NUL or other control characters, at most 1024 bytes.
+func validEnvName(name string) bool {
+	return name != "" && len(name) <= 1024 && !strings.ContainsFunc(name, func(r rune) bool { return r == '=' || unicode.IsControl(r) })
+}
+
 // validateFileNames checks keys that become file names in a mount.
 func validateFileNames(field string, m map[string]string) error {
 	if len(m) == 0 {
@@ -530,7 +548,7 @@ func validateFileNames(field string, m map[string]string) error {
 	}
 	var errs []error
 	for k := range m {
-		if k == "" || k == "." || k == ".." || strings.ContainsAny(k, `/\`) {
+		if k == "" || k == "." || k == ".." || len(k) > 255 || strings.ContainsAny(k, `/\`) || strings.ContainsFunc(k, unicode.IsControl) {
 			errs = append(errs, fmt.Errorf("%s: %q is not a valid file name", field, k))
 		}
 	}

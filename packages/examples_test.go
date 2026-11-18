@@ -74,11 +74,11 @@ func TestExamplesGolden(t *testing.T) {
 
 func TestExamplesLint(t *testing.T) {
 	for _, ex := range examples {
-		if issues := Lint(examplePath(ex.name), ex.opts); issues != nil {
+		if issues, _ := Lint(examplePath(ex.name), ex.opts); issues != nil {
 			t.Errorf("%s: %v", ex.name, issues)
 		}
 	}
-	if issues := Lint(examplePath("postgres"), Options{}); len(issues) != 1 {
+	if issues, _ := Lint(examplePath("postgres"), Options{}); len(issues) != 1 {
 		t.Errorf("postgres without password: want 1 issue, got %v", issues)
 	}
 }

@@ -156,6 +156,22 @@ func strictJSON(data []byte, v any) error {
 	return dec.Decode(v)
 }
 
+// Warnings lists what in rs is allowed but worth knowing before it is applied.
+func Warnings(rs []Resource) []string {
+	var out []string
+	for _, r := range rs {
+		w, ok := r.Spec.(*WorkloadSpec)
+		if !ok {
+			continue
+		}
+		for _, e := range w.EnvironmentFrom {
+			out = append(out, fmt.Sprintf("Workload %q sets %s from Secret %q as an environment variable: anyone who can inspect the container (docker inspect) reads the value; mount the Secret as a file if the application can read one",
+				r.Metadata.Name, e.Name, e.Secret))
+		}
+	}
+	return out
+}
+
 // ValidateSet checks rules that span resources: names, uniqueness, references, and the ports and
 // exposures of Services.
 func ValidateSet(rs []Resource) error {
