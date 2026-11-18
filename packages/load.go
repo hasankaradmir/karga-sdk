@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -48,6 +47,7 @@ func Load(path string) (*Package, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	p.Digest = archive.ContentDigest(files)
 	return p, nil
 }
 
@@ -106,24 +106,4 @@ func fromFiles(files map[string][]byte) (*Package, error) {
 		return nil, errors.New("packages/: package dependencies are not supported")
 	}
 	return p, nil
-}
-
-// Digest returns the package digest: the archive file's SHA-256, or for a directory the SHA-256 of
-// its reproducible archive (archive.Pack), so the same content always gives the same digest.
-func Digest(path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() {
-		f, err := os.Open(path)
-		if err != nil {
-			return "", err
-		}
-		defer func() { _ = f.Close() }() // read-only
-		return archive.Digest(f)
-	}
-	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(archive.Pack(path, pw, archive.DefaultLimits)) }()
-	return archive.Digest(pr)
 }

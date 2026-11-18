@@ -58,6 +58,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   `additionalItems`, draft-7 `dependencies` and anchor references (`"$ref": "#name"`); a value
   passed through `b64enc` got into Configs and Workloads, and was not masked. Both walks of a schema
   (secret paths and `--strict`) now know the same keywords.
+- A package's digest was the SHA-256 of its gzip archive, which depends on the Go version that
+  compressed it and on the format (directory or `.tgz`), and was read apart from the files rendered.
+  It is `Package.Digest` now, computed by `Load` from the paths and contents it read; `Digest(path)`
+  is gone. Releases installed before get a new revision on their next install or upgrade.
+- A package file growing while it was read could get past the 32 MiB limit; the limit counts what
+  is read.
+- `ParseMemory` and `ParseCPU` accepted 2^63, which does not fit an int64.
 - Release names are checked by every request, not only when a package is rendered: a name like
   `../x` could reach a path on the server. `resource.ValidateReleaseName` also refuses `karga` and
   `karga-…`, whose runtime objects would take the names of karga's own.

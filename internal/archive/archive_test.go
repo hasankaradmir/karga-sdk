@@ -47,10 +47,6 @@ func TestPackDeterministicAndRoundTrip(t *testing.T) {
 	if !bytes.Equal(a.Bytes(), b.Bytes()) {
 		t.Fatal("Pack is not reproducible")
 	}
-	da, _ := Digest(bytes.NewReader(a.Bytes()))
-	if !strings.HasPrefix(da, "sha256:") || len(da) != len("sha256:")+64 {
-		t.Fatalf("digest: %s", da)
-	}
 
 	got, err := Unpack(bytes.NewReader(a.Bytes()), DefaultLimits)
 	if err != nil {

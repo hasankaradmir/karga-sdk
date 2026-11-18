@@ -92,10 +92,8 @@ func TestExamplesPackReproducible(t *testing.T) {
 		if err := archive.Pack(examplePath(ex.name), &b, archive.DefaultLimits); err != nil {
 			t.Fatal(err)
 		}
-		da, _ := archive.Digest(&a)
-		db, _ := archive.Digest(&b)
-		if da != db {
-			t.Errorf("%s: digest changed between packs: %s vs %s", ex.name, da, db)
+		if !bytes.Equal(a.Bytes(), b.Bytes()) {
+			t.Errorf("%s: the archive changed between packs", ex.name)
 		}
 	}
 }

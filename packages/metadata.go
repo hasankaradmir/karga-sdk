@@ -9,8 +9,8 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
-// APIVersion is the only Package.yaml apiVersion accepted.
-const APIVersion = "karga.io/v1alpha1"
+// APIVersion is the only Package.yaml apiVersion accepted: the resources'.
+const APIVersion = resource.APIVersion
 
 // supportedRuntimes are the runtimes karga can run packages on.
 var supportedRuntimes = map[string]bool{"docker": true}
@@ -75,4 +75,7 @@ type Package struct {
 	Templates map[string][]byte
 	// Files maps paths relative to files/ to their content.
 	Files map[string][]byte
+	// Digest identifies the package's content ("sha256:…"): the same for its directory and its
+	// archive, computed from the files Load read.
+	Digest string
 }

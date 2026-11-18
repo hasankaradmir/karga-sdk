@@ -1,10 +1,14 @@
 package packages
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,24 +94,46 @@ func keys(m map[string][]byte) []string {
 	return out
 }
 
+// The digest is the package's content: its directory and its archive have the same one, however
+// the archive was compressed, and any change to a file changes it.
 func TestDigest(t *testing.T) {
-	d1, err := Digest("testdata/minimal")
+	dir, err := Load("testdata/minimal")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if err := archive.Pack("testdata/minimal", &buf, archive.DefaultLimits); err != nil {
+	files, err := archive.ReadDir("testdata/minimal", archive.DefaultLimits)
+	if err != nil {
 		t.Fatal(err)
 	}
-	tgz := filepath.Join(t.TempDir(), "m.tgz")
-	if err := os.WriteFile(tgz, buf.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
+	if !strings.HasPrefix(dir.Digest, "sha256:") || len(dir.Digest) != len("sha256:")+64 {
+		t.Fatalf("digest: %s", dir.Digest)
 	}
-	d2, err := Digest(tgz)
-	if err != nil || d1 != d2 {
-		t.Fatalf("directory digest %s != archive digest %s (%v)", d1, d2, err)
+	for _, level := range []int{gzip.DefaultCompression, gzip.BestCompression, gzip.NoCompression} {
+		var buf bytes.Buffer
+		gz, _ := gzip.NewWriterLevel(&buf, level)
+		tw := tar.NewWriter(gz)
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			_ = tw.WriteHeader(&tar.Header{Name: "minimal/" + name, Mode: 0o644, Size: int64(len(files[name])), Typeflag: tar.TypeReg})
+			_, _ = tw.Write(files[name])
+		}
+		_ = tw.Close()
+		_ = gz.Close()
+		tgz := filepath.Join(t.TempDir(), "m.tgz")
+		if err := os.WriteFile(tgz, buf.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p, err := Load(tgz)
+		if err != nil || p.Digest != dir.Digest {
+			t.Fatalf("gzip level %d: archive digest %s, directory digest %s (%v)", level, p.Digest, dir.Digest, err)
+		}
 	}
-	if _, err := Digest("testdata/missing"); err == nil {
-		t.Fatal("expected error")
+	changed := maps.Clone(files)
+	changed["values.yaml"] = append(slices.Clone(changed["values.yaml"]), '\n')
+	if archive.ContentDigest(changed) == dir.Digest {
+		t.Fatal("a changed file kept the digest")
+	}
+	// Lengths are part of what is hashed: moving bytes between a path and its content changes it.
+	if archive.ContentDigest(map[string][]byte{"ab": []byte("c")}) == archive.ContentDigest(map[string][]byte{"a": []byte("bc")}) {
+		t.Fatal("ambiguous digest")
 	}
 }
