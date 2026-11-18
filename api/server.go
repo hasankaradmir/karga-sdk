@@ -35,6 +35,8 @@ type Options struct {
 	// Classify returns the kind (ErrNotFound, ErrConflict, ErrInvalid) of an error the Backend
 	// returned that does not wrap one already, or nil: the client then sees an internal error.
 	Classify func(error) error
+	// Redact, if set, masks secret values in every error message the server sends.
+	Redact func(string) string
 }
 
 // NewServer serves b; version is reported to clients.
@@ -44,6 +46,9 @@ func NewServer(b Backend, version string, opts Options) *Server {
 	}
 	if opts.MaxRestore == 0 {
 		opts.MaxRestore = 16 << 30
+	}
+	if opts.Redact == nil {
+		opts.Redact = func(s string) string { return s }
 	}
 	if opts.Classify == nil {
 		opts.Classify = func(error) error { return nil }
@@ -196,6 +201,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// message is what the client is told of err, secret values masked.
+func (s *Server) message(err error) string { return s.opts.Redact(err.Error()) }
+
 // codeOf is the error code and HTTP status the client gets for err.
 func (s *Server) codeOf(err error) (string, int) {
 	code, status := kindOf(err)
@@ -211,7 +219,7 @@ func (s *Server) writeError(w http.ResponseWriter, err error) {
 	code, status := s.codeOf(err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error(), Code: code})
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: s.message(err), Code: code})
 }
 
 // deploy serves an install, upgrade or rollback, streaming progress events as JSON lines.
@@ -269,7 +277,7 @@ func deploy[Req any](s *Server, fn func(ctx context.Context, req Req, pkg string
 		res, err := fn(ctx, req.Request, pkgPath, progress)
 		line := deployLine{Result: res, Done: true}
 		if err != nil {
-			line.Error = err.Error()
+			line.Error = s.message(err)
 			line.Code, _ = s.codeOf(err)
 		}
 		lines <- line
@@ -311,7 +319,7 @@ func (s *Server) streamed(w http.ResponseWriter, contentType string, fn func(io.
 	start()
 	if err != nil {
 		code, _ := s.codeOf(err)
-		w.Header().Set(trailerError, err.Error())
+		w.Header().Set(trailerError, s.message(err))
 		w.Header().Set(trailerCode, code)
 	}
 }
@@ -458,7 +466,7 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 	code, err := s.b.Exec(ctx, ExecRequest{Release: req.Release, Workload: req.Workload, ExecOptions: opts})
 	if err != nil {
 		code, _ := s.codeOf(err)
-		payload, _ := json.Marshal(errorResponse{Error: err.Error(), Code: code})
+		payload, _ := json.Marshal(errorResponse{Error: s.message(err), Code: code})
 		_ = out.frame(frameError, payload)
 		return
 	}

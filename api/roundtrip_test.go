@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hasankaradmir/karga-sdk/internal/testsock"
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
@@ -303,6 +304,26 @@ func TestOptionalRequestFieldsAreOmitted(t *testing.T) {
 			if !required[name] && !strings.Contains(opts, "omitempty") && !strings.Contains(opts, "omitzero") {
 				t.Errorf("%s.%s: optional request fields must be omitempty", typ.Name(), f.Name)
 			}
+		}
+	}
+}
+
+// Error messages never carry a secret the server's redactor knows, streamed or not.
+func TestErrorsAreRedacted(t *testing.T) {
+	b := &recorder{err: errors.New("db password hunter2 refused")}
+	c := NewClient(testsock.Serve(t, NewServer(b, "dev", Options{Redact: func(s string) string { return strings.ReplaceAll(s, "hunter2", "<redacted>") }})))
+	ctx := context.Background()
+	for name, call := range map[string]func() error{
+		"json":   func() error { _, err := c.Status(ctx, ReleaseRequest{Name: "shop"}); return err },
+		"deploy": func() error { _, err := c.Rollback(ctx, RollbackRequest{Name: "shop"}, nil); return err },
+		"stream": func() error { return c.Logs(ctx, LogsRequest{Release: "shop"}, io.Discard) },
+		"exec": func() error {
+			_, err := c.Exec(ctx, ExecRequest{Release: "shop", Workload: "web", ExecOptions: ExecOptions{Cmd: []string{"ls"}}})
+			return err
+		},
+	} {
+		if err := call(); err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "<redacted>") {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 }
