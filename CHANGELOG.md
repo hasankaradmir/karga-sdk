@@ -16,6 +16,16 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 - Built and checked with Go 1.27.4 and govulncheck 1.10.0.
 
+### Fixed
+
+- A package could keep the server rendering forever: a nested `range` (over `until`, an integer
+  or a value) that writes nothing never reached the time or output limit. Every loop iteration now
+  counts (at most 1,000,000 per render) and the time limit is checked as loops run.
+- `until`, `untilStep`, `seq`, `repeat`, `indent` and `nindent` got past their size limits with
+  arguments near the limits of an integer (`seq -9223372036854775808`) and could exhaust the
+  server's memory. They are karga's own now, checking sizes without overflow; their results are
+  sprig's for every argument they accept.
+
 ## [0.1.0] - 2026-11-18
 
 First release: the code shared by the karga CLI and karga-server moves here from the karga

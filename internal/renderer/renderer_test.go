@@ -135,12 +135,30 @@ func TestRenderLimits(t *testing.T) {
 		"repeat":       {`{{ repeat 100000000 "x" }}`, "too large"},
 		"indent":       {`{{ indent 100000000 "x" }}`, "too large"},
 		"output":       {`{{ range until 10000 }}{{ $.Values.kb }}{{ end }}`, "output exceeds"},
+		// Loops that write nothing never reach the output limit; their iterations are counted.
+		"range int":       {`{{ range 100000 }}{{ range 100000 }}{{ end }}{{ end }}`, "iterations"},
+		"nested until":    {`{{ range until 10000 }}{{ range until 10000 }}{{ range until 10000 }}{{ end }}{{ end }}{{ end }}`, "iterations"},
+		"range values":    {`{{ range .Values.n }}{{ range $.Values.n }}{{ end }}{{ end }}`, "iterations"},
+		"range in define": {`{{ define "a" }}{{ range 100000 }}{{ range 100000 }}{{ end }}{{ end }}{{ end }}{{ include "a" . }}`, "iterations"},
+		"range in tpl":    {`{{ tpl "{{ range 100000 }}{{ range 100000 }}{{ end }}{{ end }}" . }}`, "iterations"},
+		// Sizes that overflow int must not get past the limits.
+		"until MinInt":     {`{{ until -9223372036854775808 }}`, "too large"},
+		"untilStep span":   {`{{ untilStep -9223372036854775807 9223372036854775807 1 }}`, "too large"},
+		"untilStep MaxInt": {`{{ untilStep 0 9223372036854775807 1 }}`, "too large"},
+		"seq MinInt":       {`{{ seq -9223372036854775808 }}`, "too large"},
+		"seq MaxInt":       {`{{ seq 9223372036854775807 }}`, "too large"},
+		"seq span":         {`{{ seq -9223372036854775807 9223372036854775807 }}`, "too large"},
+		"seq step span":    {`{{ seq -9223372036854775807 1 9223372036854775807 }}`, "too large"},
+		"repeat overflow":  {`{{ repeat 4611686018427387904 "xxxx" }}`, "too large"},
+		"indent overflow":  {`{{ indent 4611686018427387904 "a\nb\nc\nd" }}`, "too large"},
+		"nindent overflow": {`{{ nindent 4611686018427387904 "a\nb\nc\nd" }}`, "too large"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			cx := ctx()
 			cx.Values["self"] = "{{ tpl .Values.self . }}"
 			cx.Values["kb"] = strings.Repeat("x", 4096)
+			cx.Values["n"] = 1000000
 			_, err := Render(map[string][]byte{"x.yaml": []byte(c.tpl)}, cx)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
@@ -150,5 +168,9 @@ func TestRenderLimits(t *testing.T) {
 	// Normal use stays allowed.
 	if got := renderOne(t, `{{ range until 3 }}{{ . }}{{ end }}{{ repeat 2 "ab" }}{{ indent 2 "x" }}`); got != "012abab  x" {
 		t.Fatalf("got %q", got)
+	}
+	// Steps that would overflow int stop at the last value in range instead of wrapping around.
+	if got := renderOne(t, `{{ untilStep 9223372036854775807 -9223372036854775807 -9223372036854775808 }}`); got != "[9223372036854775807 -1]" {
+		t.Fatalf("untilStep near the limits: %q", got)
 	}
 }
