@@ -135,3 +135,32 @@ func TestNewerClientFeatures(t *testing.T) {
 		t.Fatalf("unknown endpoint: %v", err)
 	}
 }
+
+type ctxKey struct{}
+
+// execCtx records what the context an exec runs with carries.
+type execCtx struct {
+	recorder
+	got chan any
+}
+
+func (e *execCtx) Exec(ctx context.Context, _ ExecRequest) (int, error) {
+	e.got <- ctx.Value(ctxKey{})
+	return 0, nil
+}
+
+// An exec runs with the request's context: what the server put there (who asked) reaches the
+// backend, as for every other endpoint.
+func TestExecKeepsTheRequestsContext(t *testing.T) {
+	b := &execCtx{got: make(chan any, 1)}
+	h := NewServer(b, "dev", Options{})
+	sock := testsock.Serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, "alice")))
+	}))
+	if _, err := NewClient(sock).Exec(context.Background(), ExecRequest{Release: "shop", Workload: "web", ExecOptions: ExecOptions{Cmd: []string{"true"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-b.got; got != "alice" {
+		t.Fatalf("the exec's context carries %v", got)
+	}
+}

@@ -59,6 +59,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- An exec ran with a fresh context instead of the request's, so what the server puts in a request's
+  context (who asked) did not reach the backend for exec.
+
 - A Network could use any driver Docker has (`macvlan`, `ipvlan`), putting containers on the host's
   network past the gateway; a Volume any plugin. Networks are `bridge` and Volumes `local` now.
   Variable names may not hold control characters and file names of Configs and Secrets have at most

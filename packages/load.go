@@ -1,4 +1,4 @@
-// Package packages implements package use cases: load, render, lint, show.
+// Package packages implements package use cases: load, render and lint.
 package packages
 
 import (
