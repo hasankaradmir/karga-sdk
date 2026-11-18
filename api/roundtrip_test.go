@@ -152,8 +152,10 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 			res, err := c.Rollback(ctx, RollbackRequest{Name: "shop", Revision: 1}, nil)
 			return res.Revision, err
 		}, RollbackRequest{Name: "shop", Revision: 1}},
-		{"Uninstall", func() (any, error) { return c.Uninstall(ctx, UninstallRequest{Name: "shop", KeepHistory: true}) },
-			UninstallRequest{Name: "shop", KeepHistory: true}},
+		{"Uninstall", func() (any, error) {
+			return c.Uninstall(ctx, UninstallRequest{Name: "shop", KeepHistory: true, Confirmed: true})
+		},
+			UninstallRequest{Name: "shop", KeepHistory: true, Confirmed: true}},
 		{"List", func() (any, error) { return c.List(ctx) }, nil},
 		{"History", func() (any, error) { return c.History(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
 		{"Values", func() (any, error) { return c.Values(ctx, ValuesRequest{Name: "shop", Revision: 2, All: true}) },
@@ -189,8 +191,8 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 			return out.String(), err
 		}, VolumeBackupRequest{Release: "shop", Volume: "data", Stop: true}},
 		{"RestoreVolume", func() (any, error) {
-			return nil, c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz"}, strings.NewReader("backup"))
-		}, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz"}},
+			return nil, c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz", Confirmed: true}, strings.NewReader("backup"))
+		}, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz", Confirmed: true}},
 		{"Reconcile", func() (any, error) { return c.Reconcile(ctx, ReconcileRequest{Name: "shop", Force: true}) }, ReconcileRequest{Name: "shop", Force: true}},
 		{"Pause", func() (any, error) { return nil, c.Pause(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
 		{"Resume", func() (any, error) { return nil, c.Resume(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
@@ -210,8 +212,10 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 			return nil, c.AddGatewayListener(ctx, Listener{Name: "web", Port: 8080, Protocol: "http"})
 		},
 			Listener{Name: "web", Port: 8080, Protocol: "http"}},
-		{"RemoveGatewayListener", func() (any, error) { return nil, c.RemoveGatewayListener(ctx, GatewayListenerRequest{Name: "web"}) },
-			GatewayListenerRequest{Name: "web"}},
+		{"RemoveGatewayListener", func() (any, error) {
+			return nil, c.RemoveGatewayListener(ctx, GatewayListenerRequest{Name: "web", Confirmed: true})
+		},
+			GatewayListenerRequest{Name: "web", Confirmed: true}},
 	}
 	if n := reflect.TypeFor[Backend]().NumMethod(); n != len(cases) {
 		t.Fatalf("%d cases for %d Backend methods", len(cases), n)
@@ -272,6 +276,20 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 			_, err := c.Upgrade(ctx, UpgradeRequest{Name: "shop", Package: demoPkg, Strategy: "blue-green"}, nil)
 			return err
 		},
+		"listen on a name": func() error { return c.SetGatewayListen(ctx, GatewayListenRequest{Addresses: []string{""}}) },
+		// What cannot be changed back needs the user's agreement, whichever client sends it.
+		"unconfirmed uninstall": func() error { _, err := c.Uninstall(ctx, UninstallRequest{Name: "shop"}); return err },
+		"unconfirmed volume deletion": func() error {
+			_, err := c.Upgrade(ctx, UpgradeRequest{CommonOptions: CommonOptions{DeleteVolumes: true}, Name: "shop", Package: demoPkg}, nil)
+			return err
+		},
+		"unconfirmed restore": func() error {
+			return c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data"}, strings.NewReader("backup"))
+		},
+		"unconfirmed exposure": func() error {
+			return c.SetGatewayListen(ctx, GatewayListenRequest{Addresses: []string{"0.0.0.0"}})
+		},
+		"unconfirmed listener removal": func() error { return c.RemoveGatewayListener(ctx, GatewayListenerRequest{Name: "web"}) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := call(); !errors.Is(err, ErrInvalid) {
@@ -324,6 +342,22 @@ func TestErrorsAreRedacted(t *testing.T) {
 	} {
 		if err := call(); err == nil || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "<redacted>") {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Only what cannot be changed back has a risk: a dry run, loopback addresses and an upgrade that
+// keeps volumes need no agreement.
+func TestRiskFreeRequests(t *testing.T) {
+	for name, r := range map[string]interface{ Risk() string }{
+		"dry-run uninstall": UninstallRequest{Name: "shop", DryRun: true},
+		"upgrade":           UpgradeRequest{Name: "shop"},
+		"dry-run deletion":  RollbackRequest{CommonOptions: CommonOptions{DryRun: true, DeleteVolumes: true}, Name: "shop"},
+		"loopback":          GatewayListenRequest{Addresses: []string{"127.0.0.1", "::1"}},
+		"default listen":    GatewayListenRequest{},
+	} {
+		if risk := r.Risk(); risk != "" {
+			t.Errorf("%s: %q", name, risk)
 		}
 	}
 }

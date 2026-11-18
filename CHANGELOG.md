@@ -7,6 +7,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- Requests that change what cannot be changed back have `Risk()` and `Confirmed`: uninstall,
+  volume restore, removing a gateway listener, listening on an address other than loopback, and an
+  upgrade or rollback with `DeleteVolumes`. The server refuses one with a risk that is not
+  `Confirmed` (`ErrInvalid`); a client asks its user with the `Risk()` text first.
+- `GatewayListenRequest` refuses an address that is not an IP.
+
 - `api.Options.Redact` masks secret values in every error message the server sends.
 - `api.ClientContext` returns the client's own context inside a mutation: the mutation goes on when
   the client goes away, but what only waits before changing anything (a release's lock) can stop.

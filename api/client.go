@@ -304,7 +304,8 @@ func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io
 
 // RestoreVolume implements Backend.
 func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error {
-	q := url.Values{"release": {req.Release}, "volume": {req.Volume}, "name": {req.Name}, "force": {strconv.FormatBool(req.Force)}}
+	q := url.Values{"release": {req.Release}, "volume": {req.Volume}, "name": {req.Name}, "force": {strconv.FormatBool(req.Force)},
+		"confirmed": {strconv.FormatBool(req.Confirmed)}}
 	resp, err := c.post(ctx, "/v1/volume/restore?"+q.Encode(), r, http.Header{"Content-Type": {"application/gzip"}})
 	if err != nil {
 		return err

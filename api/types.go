@@ -26,6 +26,8 @@ type CommonOptions struct {
 	Force bool `json:"force,omitempty"`
 	// DeleteVolumes allows a plan to delete volumes with retention delete, and their data.
 	DeleteVolumes bool `json:"deleteVolumes,omitempty"`
+	// Confirmed says the user agreed to what the request's Risk describes (see Risk).
+	Confirmed bool `json:"confirmed,omitempty"`
 }
 
 // Duration is a time.Duration that travels as text such as "5m0s".
@@ -114,6 +116,7 @@ type UninstallRequest struct {
 	DeleteVolumes bool   `json:"deleteVolumes,omitempty"`
 	KeepHistory   bool   `json:"keepHistory,omitempty"`
 	DryRun        bool   `json:"dryRun,omitempty"`
+	Confirmed     bool   `json:"confirmed,omitempty"` // see Risk
 }
 
 // LogsRequest selects containers to show logs of: the workloads of a release (all, or the named
@@ -143,7 +146,8 @@ type VolumeRestoreRequest struct {
 	Volume  string `json:"volume"`
 	Force   bool   `json:"force,omitempty"`
 	// Name names the backup in messages (its file name).
-	Name string `json:"name,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
 }
 
 // ResourceStatus compares one applied resource with what the runtime reports.
