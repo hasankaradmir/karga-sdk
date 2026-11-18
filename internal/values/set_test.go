@@ -33,7 +33,7 @@ func TestApplySet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			m := map[string]any{}
-			if err := ApplySet(m, tt.expr, tt.forceString); err != nil {
+			if err := (Set{Expr: tt.expr, String: tt.forceString}).Apply(m, nil); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(m, tt.want) {
@@ -45,7 +45,7 @@ func TestApplySet(t *testing.T) {
 
 func TestApplySetOverwritesScalar(t *testing.T) {
 	m := map[string]any{"a": "scalar", "l": []any{1, 2, 3}}
-	if err := ApplySet(m, "a.b=1,l[1]=9", false); err != nil {
+	if err := (Set{Expr: "a.b=1,l[1]=9"}).Apply(m, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]any{"a": map[string]any{"b": 1}, "l": []any{1, 9, 3}}
@@ -56,7 +56,7 @@ func TestApplySetOverwritesScalar(t *testing.T) {
 
 func TestApplySetNullDeletesOnMerge(t *testing.T) {
 	sets := map[string]any{}
-	if err := ApplySet(sets, "storage=null", false); err != nil {
+	if err := (Set{Expr: "storage=null"}).Apply(sets, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := Merge(map[string]any{"storage": map[string]any{"size": "5Gi"}, "keep": 1}, sets)
@@ -67,17 +67,35 @@ func TestApplySetNullDeletesOnMerge(t *testing.T) {
 
 func TestApplySetErrors(t *testing.T) {
 	for _, expr := range []string{"novalue", "a..b=1", "=1", "a[x]=1", "a[-1]=1", "a[99999999]=1", "a]=1", "[0]=1"} {
-		if err := ApplySet(map[string]any{}, expr, false); err == nil {
-			t.Errorf("ApplySet(%q): expected error", expr)
+		if err := (Set{Expr: expr}).Apply(map[string]any{}, nil); err == nil {
+			t.Errorf("Set %q: expected error", expr)
 		}
 	}
 }
 
-func FuzzApplySet(f *testing.F) {
+func FuzzSet(f *testing.F) {
 	for _, s := range []string{"a=b", "a.b[0]=1,c=d", `a\,b=c`, "x[3][2].y=null"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(_ *testing.T, expr string) {
-		_ = ApplySet(map[string]any{}, expr, false)
+		_ = (Set{Expr: expr}).Apply(map[string]any{}, nil)
 	})
+}
+
+// An index into a list the overrides do not hold yet edits the list being overridden.
+func TestSetEditsTheListItOverrides(t *testing.T) {
+	seed := map[string]any{"hosts": []any{"a", "b", "c"}, "users": []any{map[string]any{"name": "x", "admin": false}}}
+	m := map[string]any{}
+	for _, s := range []Set{{Expr: "hosts[1]=B"}, {Expr: "users[0].admin=true"}, {Expr: "hosts[3]=d"}} {
+		if err := s.Apply(m, seed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]any{"hosts": []any{"a", "B", "c", "d"}, "users": []any{map[string]any{"name": "x", "admin": true}}}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("got %v", m)
+	}
+	if seed["hosts"].([]any)[1] != "b" {
+		t.Fatal("the seed was changed")
+	}
 }

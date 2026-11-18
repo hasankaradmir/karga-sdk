@@ -50,7 +50,7 @@ most 10000 files and 32 MiB.
 c := api.NewClient(api.DefaultSocket) // /run/karga/karga.sock
 rels, err := c.List(ctx)
 res, err := c.Upgrade(ctx, api.UpgradeRequest{Name: "cache", Package: "./redis",
-	Values: api.ValuesInput{Set: []string{"image.tag=7.4"}}}, func(e api.Event) { ... })
+	Values: api.ValuesInput{Sets: []api.Set{{Expr: "image.tag=7.4"}}}}, func(e api.Event) { ... })
 if errors.Is(err, api.ErrNotFound) { ... }
 ```
 

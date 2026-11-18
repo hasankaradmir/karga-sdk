@@ -137,12 +137,12 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 	}{
 		{"Install", func() (any, error) {
 			var events []Event
-			res, err := c.Install(ctx, InstallRequest{Name: "shop", Package: demoPkg, Values: ValuesInput{Set: []string{"a=b"}}}, func(e Event) { events = append(events, e) })
+			res, err := c.Install(ctx, InstallRequest{Name: "shop", Package: demoPkg, Values: ValuesInput{Sets: []Set{{Expr: "a=b"}}}}, func(e Event) { events = append(events, e) })
 			if len(events) != 1 {
 				return nil, fmt.Errorf("events %v", events)
 			}
 			return res.Revision, err
-		}, InstallRequest{Name: "shop", Values: ValuesInput{Set: []string{"a=b"}}}},
+		}, InstallRequest{Name: "shop", Values: ValuesInput{Sets: []Set{{Expr: "a=b"}}}}},
 		{"Upgrade", func() (any, error) {
 			res, err := c.Upgrade(ctx, UpgradeRequest{Name: "shop", Package: demoPkg, Strategy: "replace"}, nil)
 			return res.Revision, err
@@ -287,12 +287,12 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 // newer client that leaves a new field at its zero value still talks to an older server of the
 // same Major.
 var required = map[string]bool{"name": true, "release": true, "workload": true, "volume": true, "from": true, "cmd": true,
-	"values": true, "port": true, "protocol": true}
+	"values": true, "port": true, "protocol": true, "expr": true}
 
 func TestOptionalRequestFieldsAreOmitted(t *testing.T) {
 	for _, v := range []any{InstallRequest{}, UpgradeRequest{}, RollbackRequest{}, UninstallRequest{}, ReleaseRequest{}, RevisionRequest{},
 		ValuesRequest{}, DiffRequest{}, ReconcileRequest{}, EventsRequest{}, LogsRequest{}, VolumeBackupRequest{}, VolumeRestoreRequest{},
-		GatewayAccessLogRequest{}, GatewayListenRequest{}, GatewayListenerRequest{}, Listener{}, CommonOptions{}, ValuesInput{}, execRequest{}} {
+		GatewayAccessLogRequest{}, GatewayListenRequest{}, GatewayListenerRequest{}, Listener{}, CommonOptions{}, ValuesInput{}, Set{}, execRequest{}} {
 		typ := reflect.TypeOf(v)
 		for f := range typ.Fields() {
 			tag, ok := f.Tag.Lookup("json")

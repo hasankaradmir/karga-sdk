@@ -41,14 +41,19 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return err
 }
 
+// Set is a --set expression, or a --set-string one when String.
+type Set struct {
+	Expr   string `json:"expr"`
+	String bool   `json:"string,omitempty"`
+}
+
 // ValuesInput are the values a user gives an install or upgrade, applied in this order onto the
 // package defaults.
 type ValuesInput struct {
 	// Files are the contents of values files (-f).
 	Files [][]byte `json:"files,omitempty"`
-	// Set and SetString are --set and --set-string expressions such as a.b=1.
-	Set       []string `json:"set,omitempty"`
-	SetString []string `json:"setString,omitempty"`
+	// Sets are --set and --set-string expressions such as a.b=1, in the order they were given.
+	Sets []Set `json:"sets,omitempty"`
 	// Strict rejects values the schema does not declare.
 	Strict bool `json:"strict,omitempty"`
 }

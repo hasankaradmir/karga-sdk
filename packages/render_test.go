@@ -57,11 +57,10 @@ func TestRenderValuePrecedence(t *testing.T) {
 	if err := os.WriteFile(f, []byte("image: {tag: '1.26'}\nport: 9000\nstorage: {enabled: false}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := renderDemo(t, Options{
-		ValueFiles: []string{f},
-		Sets:       []string{"port=9100"},
-		SetStrings: []string{"image.tag=1.28"},
-	})
+	m, err := renderDemo(t, Options{Values: ValueSources{
+		Files: []string{f},
+		Sets:  []Set{{Expr: "port=9100"}, {Expr: "image.tag=1.28", String: true}},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +80,11 @@ func TestRenderErrors(t *testing.T) {
 		want string
 	}{
 		{"bad release name", Options{ReleaseName: "Web_1"}, "DNS label"},
-		{"schema type", Options{Sets: []string{"image.tag=1"}}, "/image/tag"},
-		{"strict unknown", Options{Sets: []string{"typo=x"}, Strict: true}, "typo"},
-		{"missing values file", Options{ValueFiles: []string{"nope.yaml"}}, "nope.yaml"},
-		{"bad set", Options{Sets: []string{"novalue"}}, "missing '='"},
-		{"invalid resource", Options{Sets: []string{"port=70000"}}, "templates/workload.yaml"},
+		{"schema type", Options{Values: ValueSources{Sets: []Set{{Expr: "image.tag=1"}}}}, "/image/tag"},
+		{"strict unknown", Options{Values: ValueSources{Sets: []Set{{Expr: "typo=x"}}}, Strict: true}, "typo"},
+		{"missing values file", Options{Values: ValueSources{Files: []string{"nope.yaml"}}}, "nope.yaml"},
+		{"bad set", Options{Values: ValueSources{Sets: []Set{{Expr: "novalue"}}}}, "missing '='"},
+		{"invalid resource", Options{Values: ValueSources{Sets: []Set{{Expr: "port=70000"}}}}, "templates/workload.yaml"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,13 +94,13 @@ func TestRenderErrors(t *testing.T) {
 			}
 		})
 	}
-	if _, err := renderDemo(t, Options{Sets: []string{"typo=x"}}); err != nil {
+	if _, err := renderDemo(t, Options{Values: ValueSources{Sets: []Set{{Expr: "typo=x"}}}}); err != nil {
 		t.Fatalf("unknown value must pass without --strict: %v", err)
 	}
 }
 
 func TestRedactedDocuments(t *testing.T) {
-	m, err := renderDemo(t, Options{Sets: []string{"password=hunter2"}})
+	m, err := renderDemo(t, Options{Values: ValueSources{Sets: []Set{{Expr: "password=hunter2"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,10 +142,10 @@ func TestLint(t *testing.T) {
 }
 
 func TestRenderOverrides(t *testing.T) {
-	m, err := renderDemo(t, Options{
-		BaseOverrides: map[string]any{"port": 9000, "storage": map[string]any{"enabled": false}},
-		Sets:          []string{"image.tag=1.28", "password=null"},
-	})
+	m, err := renderDemo(t, Options{Values: ValueSources{
+		Base: map[string]any{"port": 9000, "storage": map[string]any{"enabled": false}},
+		Sets: []Set{{Expr: "image.tag=1.28"}, {Expr: "password=null"}},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,5 +251,29 @@ func TestMaskValues(t *testing.T) {
 	}
 	if vals["db"].(map[string]any)["password"] != "pw-123456" {
 		t.Fatal("the input was changed")
+	}
+}
+
+// --set and --set-string apply in the order they were given: the last one wins.
+func TestSetsApplyInOrder(t *testing.T) {
+	for _, tc := range []struct {
+		sets []Set
+		want any
+	}{
+		{[]Set{{Expr: "image.tag=1", String: true}, {Expr: "image.tag=2"}}, 2},
+		{[]Set{{Expr: "image.tag=2"}, {Expr: "image.tag=1", String: true}}, "1"},
+	} {
+		got, err := Overrides(ValueSources{Sets: tc.sets}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tag := got["image"].(map[string]any)["tag"]; tag != tc.want {
+			t.Errorf("%v: tag = %#v, want %#v", tc.sets, tag, tc.want)
+		}
+	}
+	// An index into a default list edits it.
+	got, err := Overrides(ValueSources{Sets: []Set{{Expr: "hosts[1]=b2"}}}, map[string]any{"hosts": []any{"a", "b"}})
+	if err != nil || !reflect.DeepEqual(got["hosts"], []any{"a", "b2"}) {
+		t.Fatalf("hosts: %v %v", got["hosts"], err)
 	}
 }

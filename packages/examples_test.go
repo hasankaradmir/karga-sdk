@@ -17,7 +17,7 @@ var examples = []struct {
 	opts          Options
 }{
 	{"redis", "my-redis", Options{}},
-	{"postgres", "my-db", Options{Sets: []string{"database.password=s3cret"}}},
+	{"postgres", "my-db", Options{Values: ValueSources{Sets: []Set{{Expr: "database.password=s3cret"}}}}},
 }
 
 func examplePath(name string) string { return filepath.Join("..", "examples", name) }

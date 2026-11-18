@@ -20,16 +20,26 @@ type Options struct {
 	ReleaseName string
 	// Revision defaults to 1.
 	Revision int
-	// BaseOverrides are applied before ValueFiles (e.g. values reused from the previous revision).
-	BaseOverrides map[string]any
-	// ValueFiles are applied in order, then ValueData (values files a client read and sent), then
-	// Sets, then SetStrings.
-	ValueFiles []string
-	ValueData  [][]byte
-	Sets       []string
-	SetStrings []string
+	Values   ValueSources
 	// Strict rejects values the schema does not declare.
 	Strict bool
+}
+
+// ValueSources are the values a user gives a package, applied in this order onto its defaults.
+type ValueSources struct {
+	// Base is applied first (e.g. values reused from the previous revision).
+	Base map[string]any
+	// Files are values files read here, then Data values files a client read and sent.
+	Files []string
+	Data  [][]byte
+	// Sets are --set and --set-string expressions, in the order they were given.
+	Sets []Set
+}
+
+// Set is a --set expression ("a.b=1,c[0]=x"), or a --set-string one when String.
+type Set struct {
+	Expr   string `json:"expr"`
+	String bool   `json:"string,omitempty"`
 }
 
 // Document is one rendered resource.
@@ -67,7 +77,7 @@ func Render(p *Package, opts Options) (*Manifest, error) {
 	if err := p.Metadata.Validate(); err != nil {
 		return nil, prefixed(metadataFile, err)
 	}
-	overrides, err := Overrides(opts)
+	overrides, err := Overrides(opts.Values, p.Values)
 	if err != nil {
 		return nil, err
 	}
@@ -151,31 +161,28 @@ func leadingBlank(doc string) int {
 // notesTemplate is the name NOTES.txt is rendered under, next to the templates.
 const notesTemplate = "../" + notesFile
 
-// Overrides stacks the user-supplied values of opts, keeping nulls so they delete defaults later.
-func Overrides(opts Options) (map[string]any, error) {
-	vals := values.Overlay(nil, opts.BaseOverrides)
-	for _, f := range opts.ValueFiles {
+// Overrides stacks the user-supplied values v, keeping nulls so they delete defaults later. A set
+// that indexes a list edits the list it overrides, from defaults or v's files (a[1]=x keeps a[0]).
+func Overrides(v ValueSources, defaults map[string]any) (map[string]any, error) {
+	vals := values.Overlay(nil, v.Base)
+	for _, f := range v.Files {
 		fv, err := values.LoadFile(f)
 		if err != nil {
 			return nil, err
 		}
 		vals = values.Overlay(vals, fv)
 	}
-	for i, data := range opts.ValueData {
+	for i, data := range v.Data {
 		fv, err := values.Decode(data)
 		if err != nil {
 			return nil, fmt.Errorf("values file %d: %w", i+1, err)
 		}
 		vals = values.Overlay(vals, fv)
 	}
+	seed := values.Merge(defaults, vals)
 	sets := map[string]any{}
-	for _, s := range opts.Sets {
-		if err := values.ApplySet(sets, s, false); err != nil {
-			return nil, err
-		}
-	}
-	for _, s := range opts.SetStrings {
-		if err := values.ApplySet(sets, s, true); err != nil {
+	for _, s := range v.Sets {
+		if err := (values.Set{Expr: s.Expr, String: s.String}).Apply(sets, seed); err != nil {
 			return nil, err
 		}
 	}

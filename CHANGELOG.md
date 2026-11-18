@@ -33,6 +33,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
     is `/v1/gateway/access-log`, `/v1/gateway/listen`, `/v1/gateway/listeners/add` and
     `/v1/gateway/listeners/remove`.
   - `ErrNotRunning`, `ErrDetached` and `ErrDisconnected` are declared with the other errors.
+- Values: `packages.Options` holds the user's values in `Values` (`ValueSources`: `Base`, `Files`,
+  `Data`, `Sets`), and `--set`/`--set-string` are one ordered list (`[]Set`, `String` for
+  `--set-string`), as `api.ValuesInput.Sets` is: they apply in the order given, the last one wins.
+  An index into a list edits the list it overrides (`hosts[1]=x` keeps `hosts[0]` from the
+  defaults or the files); a list given whole still replaces the default one. `Overrides` takes the
+  package defaults; `values.ApplySet` is `values.Set.Apply`.
 - `resource.Resource.Spec` has the exported type `resource.Spec` (with `Kind()`), which only the
   package implements. `WorkloadSpec.PortNamed` is `TargetPort`: it also matches a port number,
   unlike `ServiceSpec.PortNamed`.

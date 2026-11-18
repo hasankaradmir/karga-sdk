@@ -10,13 +10,22 @@ import (
 // maxListIndex bounds a[N] so a typo cannot allocate a huge list.
 const maxListIndex = 10000
 
-// ApplySet applies a --set expression ("a.b=1,c[0]=x") to m. Values are typed (int, bool, null)
-// unless forceString is set. null stores nil, which Merge turns into a key deletion.
+// Set is a --set expression ("a.b=1,c[0]=x"), or a --set-string one when String. Values of a --set
+// are typed (int, bool, null); null stores nil, which Merge turns into a key deletion.
 // shortcut: the {a,b} list literal is not supported; add it if users ask.
-func ApplySet(m map[string]any, expr string, forceString bool) error {
+type Set struct {
+	Expr   string
+	String bool
+}
+
+// Apply applies s to m. A list replaces the one it overrides as a whole, so where s indexes a list
+// m does not hold yet, the list starts as a copy of the one at the same path in seed (the values s
+// changes): a[1]=x keeps a[0].
+func (s Set) Apply(m, seed map[string]any) error {
 	if m == nil {
-		return errors.New("ApplySet: nil map")
+		return errors.New("Set.Apply: nil map")
 	}
+	expr := s.Expr
 	for _, assign := range splitUnescaped(expr, ',') {
 		kv := splitUnescaped(assign, '=')
 		if len(kv) < 2 {
@@ -29,8 +38,8 @@ func ApplySet(m map[string]any, expr string, forceString bool) error {
 		if err != nil {
 			return fmt.Errorf("--set %q: %w", expr, err)
 		}
-		val := typed(unescape(raw), forceString)
-		if _, err := set(m, steps, val); err != nil {
+		val := typed(unescape(raw), s.String)
+		if _, err := set(m, seed, steps, val); err != nil {
 			return fmt.Errorf("--set %q: %w", expr, err)
 		}
 	}
@@ -73,17 +82,26 @@ func parseKey(key string) ([]step, error) {
 	return steps, nil
 }
 
-func set(cur any, steps []step, val any) (any, error) {
+// set sets val at steps in cur; seed is what cur overrides at the same place.
+func set(cur, seed any, steps []step, val any) (any, error) {
 	if len(steps) == 0 {
 		return val, nil
 	}
 	s := steps[0]
 	if s.isIdx {
-		list, _ := cur.([]any)
+		list, ok := cur.([]any)
+		seedList, _ := seed.([]any)
+		if !ok && cur == nil {
+			list, _ = deepCopy(seedList).([]any)
+		}
 		for len(list) <= s.index {
 			list = append(list, nil)
 		}
-		child, err := set(list[s.index], steps[1:], val)
+		var childSeed any
+		if s.index < len(seedList) {
+			childSeed = seedList[s.index]
+		}
+		child, err := set(list[s.index], childSeed, steps[1:], val)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +113,8 @@ func set(cur any, steps []step, val any) (any, error) {
 		// a.b=c replaces a scalar or list at a with a map, like a values file would.
 		m = map[string]any{}
 	}
-	child, err := set(m[s.key], steps[1:], val)
+	seedMap, _ := seed.(map[string]any)
+	child, err := set(m[s.key], seedMap[s.key], steps[1:], val)
 	if err != nil {
 		return nil, err
 	}
