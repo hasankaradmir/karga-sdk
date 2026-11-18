@@ -50,5 +50,5 @@ jobs:
           go-version-file: go.mod
       - run: |
           base=$(git describe --tags --abbrev=0 2>/dev/null) || { echo "no release to compare with yet"; exit 0; }
-          # shortcut: golang.org/x/exp has no versions; pin a commit once releases depend on this.
-          go run golang.org/x/exp/cmd/gorelease@latest -base="$base"
+          # golang.org/x/exp has no tagged versions: pinned by pseudo-version; bump it deliberately.
+          go run golang.org/x/exp/cmd/gorelease@v0.0.0-20261117202309-7a49493bfd90 -base="$base"
