@@ -118,10 +118,29 @@ func apiMismatch(client string) error {
 	return fmt.Errorf("%w: karga speaks API %s, karga-server API %s: upgrade %s", ErrIncompatible, client, Version, upgrade)
 }
 
+type clientKey struct{}
+
+// detach returns a context that goes on when the client goes away, carrying the client's for
+// ClientContext.
+func detach(ctx context.Context) context.Context {
+	return context.WithValue(context.WithoutCancel(ctx), clientKey{}, ctx)
+}
+
+// ClientContext returns the context of the client's request. A Backend's mutation runs on a context
+// the client's going away does not cancel, so nothing is left half done; what only waits before it
+// changes anything (for a release's lock, say) can stop when the client's is done instead. For a
+// context that is not a mutation's, it returns ctx.
+func ClientContext(ctx context.Context) context.Context {
+	if c, ok := ctx.Value(clientKey{}).(context.Context); ok {
+		return c
+	}
+	return ctx
+}
+
 // mutation is handle for requests that change something: they go on to the end when the client
 // goes away (Ctrl-C, a broken connection), so nothing is left half done because of the client.
 func mutation[Req, Out any](s *Server, fn func(context.Context, Req) (Out, error)) http.HandlerFunc {
-	return handle(s, func(ctx context.Context, req Req) (Out, error) { return fn(context.WithoutCancel(ctx), req) })
+	return handle(s, func(ctx context.Context, req Req) (Out, error) { return fn(detach(ctx), req) })
 }
 
 // handle serves a JSON endpoint: it decodes and validates the request, calls fn and writes its
@@ -246,7 +265,7 @@ func deploy[Req any](s *Server, fn func(ctx context.Context, req Req, pkg string
 			}
 		}
 		// The operation goes on if the client goes away; only its progress reports are lost.
-		ctx := context.WithoutCancel(r.Context())
+		ctx := detach(r.Context())
 		res, err := fn(ctx, req.Request, pkgPath, progress)
 		line := deployLine{Result: res, Done: true}
 		if err != nil {
@@ -355,7 +374,7 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	err = s.b.RestoreVolume(context.WithoutCancel(r.Context()), req, f)
+	err = s.b.RestoreVolume(detach(r.Context()), req, f)
 	if err != nil {
 		s.writeError(w, err)
 		return

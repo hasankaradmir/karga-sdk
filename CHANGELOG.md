@@ -7,6 +7,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- `api.ClientContext` returns the client's own context inside a mutation: the mutation goes on when
+  the client goes away, but what only waits before changing anything (a release's lock) can stop.
 - `packages.MaskValues` masks the values at secret paths, `*` (every key or element) included,
   for code that stores or shows values.
 - `resource.Warnings`, `Manifest.Warnings`: what a package does that is allowed but worth knowing.
