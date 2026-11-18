@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func writeTree(t *testing.T, files map[string]string) string {
+func writeTree(t testing.TB, files map[string]string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "redis")
 	for name, content := range files {
