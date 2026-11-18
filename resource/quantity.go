@@ -30,7 +30,7 @@ func ParseMemory(s string) (int64, error) {
 		}
 	}
 	f, err := strconv.ParseFloat(num, 64)
-	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 {
+	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor >= math.MaxInt64 { // 2^63 itself does not fit
 		return 0, fmt.Errorf("%q is not a valid memory quantity (e.g. 512Mi, 1Gi)", s)
 	}
 	return int64(f * factor), nil
@@ -43,7 +43,7 @@ func ParseCPU(s string) (int64, error) {
 		num, factor = strings.TrimSuffix(s, "m"), 1
 	}
 	f, err := strconv.ParseFloat(num, 64)
-	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor > math.MaxInt64 || f*factor < 1 {
+	if !decimal.MatchString(num) || err != nil || !(f > 0) || math.IsInf(f, 0) || f*factor >= math.MaxInt64 || f*factor < 1 {
 		return 0, fmt.Errorf("%q is not a valid cpu quantity (e.g. 1, 0.5, 500m)", s)
 	}
 	return int64(f * factor), nil

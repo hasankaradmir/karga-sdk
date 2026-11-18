@@ -122,6 +122,8 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 }
 
 // clean drops the "<no value>" text/template prints for missing map keys, so optional values render empty.
+// shortcut: the same text written in a template is dropped too (as in Helm); a template can print it
+// with {{ "<no" }} value>.
 func clean(s string) string { return strings.ReplaceAll(s, "<no value>", "") }
 
 // denied lists sprig functions that read the host or are non-deterministic, with the reason.

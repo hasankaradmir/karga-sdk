@@ -392,3 +392,12 @@ func TestDriversAndNames(t *testing.T) {
 		}
 	}
 }
+
+func TestQuantityLimits(t *testing.T) {
+	if _, err := ParseMemory("8388608Ti"); err == nil { // 2^63 bytes: one more than int64 holds
+		t.Fatal("2^63 bytes accepted")
+	}
+	if n, err := ParseMemory("8388607Ti"); err != nil || n != 8388607<<40 {
+		t.Fatalf("8388607Ti: %d %v", n, err)
+	}
+}
