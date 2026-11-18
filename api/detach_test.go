@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hasankaradmir/karga-sdk/internal/testsock"
 )
@@ -19,6 +20,8 @@ type slow struct {
 	started  chan struct{}
 	finish   chan struct{}
 	canceled chan bool
+	// clientGone says whether ClientContext ended while the operation ran on.
+	clientGone chan bool
 }
 
 func (s *slow) Install(ctx context.Context, req InstallRequest, progress func(Event)) (*Result, error) {
@@ -26,6 +29,12 @@ func (s *slow) Install(ctx context.Context, req InstallRequest, progress func(Ev
 	close(s.started)
 	<-s.finish
 	s.canceled <- ctx.Err() != nil
+	select {
+	case <-ClientContext(ctx).Done():
+		s.clientGone <- true
+	case <-time.After(5 * time.Second):
+		s.clientGone <- false
+	}
 	return &Result{Release: req.Name}, nil
 }
 
@@ -37,7 +46,7 @@ func serve(t *testing.T, b Backend) string {
 }
 
 func TestOperationOutlivesTheClient(t *testing.T) {
-	b := &slow{started: make(chan struct{}), finish: make(chan struct{}), canceled: make(chan bool, 1)}
+	b := &slow{started: make(chan struct{}), finish: make(chan struct{}), canceled: make(chan bool, 1), clientGone: make(chan bool, 1)}
 	c := NewClient(serve(t, b))
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
@@ -56,6 +65,9 @@ func TestOperationOutlivesTheClient(t *testing.T) {
 	close(b.finish)
 	if <-b.canceled {
 		t.Fatal("the server canceled the operation when the client went away")
+	}
+	if !<-b.clientGone {
+		t.Fatal("ClientContext did not end when the client went away")
 	}
 }
 

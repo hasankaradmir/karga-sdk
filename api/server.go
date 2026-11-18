@@ -35,6 +35,8 @@ type Options struct {
 	// Classify returns the kind (ErrNotFound, ErrConflict, ErrInvalid) of an error the Backend
 	// returned that does not wrap one already, or nil: the client then sees an internal error.
 	Classify func(error) error
+	// Redact, if set, masks secret values in every error message the server sends.
+	Redact func(string) string
 }
 
 // NewServer serves b; version is reported to clients.
@@ -44,6 +46,9 @@ func NewServer(b Backend, version string, opts Options) *Server {
 	}
 	if opts.MaxRestore == 0 {
 		opts.MaxRestore = 16 << 30
+	}
+	if opts.Redact == nil {
+		opts.Redact = func(s string) string { return s }
 	}
 	if opts.Classify == nil {
 		opts.Classify = func(error) error { return nil }
@@ -118,10 +123,29 @@ func apiMismatch(client string) error {
 	return fmt.Errorf("%w: karga speaks API %s, karga-server API %s: upgrade %s", ErrIncompatible, client, Version, upgrade)
 }
 
+type clientKey struct{}
+
+// detach returns a context that goes on when the client goes away, carrying the client's for
+// ClientContext.
+func detach(ctx context.Context) context.Context {
+	return context.WithValue(context.WithoutCancel(ctx), clientKey{}, ctx)
+}
+
+// ClientContext returns the context of the client's request. A Backend's mutation runs on a context
+// the client's going away does not cancel, so nothing is left half done; what only waits before it
+// changes anything (for a release's lock, say) can stop when the client's is done instead. For a
+// context that is not a mutation's, it returns ctx.
+func ClientContext(ctx context.Context) context.Context {
+	if c, ok := ctx.Value(clientKey{}).(context.Context); ok {
+		return c
+	}
+	return ctx
+}
+
 // mutation is handle for requests that change something: they go on to the end when the client
 // goes away (Ctrl-C, a broken connection), so nothing is left half done because of the client.
 func mutation[Req, Out any](s *Server, fn func(context.Context, Req) (Out, error)) http.HandlerFunc {
-	return handle(s, func(ctx context.Context, req Req) (Out, error) { return fn(context.WithoutCancel(ctx), req) })
+	return handle(s, func(ctx context.Context, req Req) (Out, error) { return fn(detach(ctx), req) })
 }
 
 // handle serves a JSON endpoint: it decodes and validates the request, calls fn and writes its
@@ -177,6 +201,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// message is what the client is told of err, secret values masked.
+func (s *Server) message(err error) string { return s.opts.Redact(err.Error()) }
+
 // codeOf is the error code and HTTP status the client gets for err.
 func (s *Server) codeOf(err error) (string, int) {
 	code, status := kindOf(err)
@@ -192,7 +219,7 @@ func (s *Server) writeError(w http.ResponseWriter, err error) {
 	code, status := s.codeOf(err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error(), Code: code})
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: s.message(err), Code: code})
 }
 
 // deploy serves an install, upgrade or rollback, streaming progress events as JSON lines.
@@ -246,11 +273,11 @@ func deploy[Req any](s *Server, fn func(ctx context.Context, req Req, pkg string
 			}
 		}
 		// The operation goes on if the client goes away; only its progress reports are lost.
-		ctx := context.WithoutCancel(r.Context())
+		ctx := detach(r.Context())
 		res, err := fn(ctx, req.Request, pkgPath, progress)
 		line := deployLine{Result: res, Done: true}
 		if err != nil {
-			line.Error = err.Error()
+			line.Error = s.message(err)
 			line.Code, _ = s.codeOf(err)
 		}
 		lines <- line
@@ -292,7 +319,7 @@ func (s *Server) streamed(w http.ResponseWriter, contentType string, fn func(io.
 	start()
 	if err != nil {
 		code, _ := s.codeOf(err)
-		w.Header().Set(trailerError, err.Error())
+		w.Header().Set(trailerError, s.message(err))
 		w.Header().Set(trailerCode, code)
 	}
 }
@@ -355,7 +382,7 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	err = s.b.RestoreVolume(context.WithoutCancel(r.Context()), req, f)
+	err = s.b.RestoreVolume(detach(r.Context()), req, f)
 	if err != nil {
 		s.writeError(w, err)
 		return
@@ -439,7 +466,7 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 	code, err := s.b.Exec(ctx, ExecRequest{Release: req.Release, Workload: req.Workload, ExecOptions: opts})
 	if err != nil {
 		code, _ := s.codeOf(err)
-		payload, _ := json.Marshal(errorResponse{Error: err.Error(), Code: code})
+		payload, _ := json.Marshal(errorResponse{Error: s.message(err), Code: code})
 		_ = out.frame(frameError, payload)
 		return
 	}
