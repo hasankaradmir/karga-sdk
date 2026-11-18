@@ -128,7 +128,7 @@ func (m Mount) Target() (kind, name string) {
 	}
 }
 
-// HealthCheck probes the workload. Only exec checks exist in v1alpha1.
+// HealthCheck probes the workload.
 type HealthCheck struct {
 	// Type is exec (Command runs inside the container), tcp (a connection to Port opens) or http
 	// (GET Path on Port answers 2xx/3xx). tcp and http need no tool in the image: karga checks them.
