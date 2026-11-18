@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/hasankaradmir/karga-sdk/internal/testsock"
 )
 
 // slow is a Backend whose installs wait to be released; it records whether the server canceled them.
@@ -34,20 +33,7 @@ func (s *slow) List(context.Context) ([]Release, error) { return nil, nil }
 
 func serve(t *testing.T, b Backend) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "kapi") // unix socket paths are short
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "s.sock")
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hs := &http.Server{Handler: NewServer(b, "dev", Options{}), ReadHeaderTimeout: time.Second}
-	go func() { _ = hs.Serve(l) }()
-	t.Cleanup(func() { _ = hs.Close() })
-	return sock
+	return testsock.Serve(t, NewServer(b, "dev", Options{}))
 }
 
 func TestOperationOutlivesTheClient(t *testing.T) {
