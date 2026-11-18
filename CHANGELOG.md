@@ -5,6 +5,17 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Added
+
+- `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
+  `ValidateSet` checks the Secret and the key exist.
+
+### Changed
+
+- Built and checked with Go 1.27.4 and govulncheck 1.10.0.
+
+## [0.1.0] - 2026-11-18
+
 First release: the code shared by the karga CLI and karga-server moves here from the karga
 repository, with its history.
 
@@ -12,11 +23,6 @@ repository, with its history.
   with Sprig, lint, render, archives; Redis and Postgres examples.
 - The API: types, error kinds, `Backend`, the unix socket client and the HTTP handler; mutating
   requests go on when the client goes away.
-
-### Added
-
-- `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
-  `ValidateSet` checks the Secret and the key exist.
 
 ### Changed
 
