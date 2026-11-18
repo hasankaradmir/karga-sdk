@@ -41,6 +41,10 @@ repository, with its history.
   file) is refused when the package renders: karga stores and shows those specs, and protects
   only Secret values. Put it in a Secret and mount it.
 
+### CI
+- `govulncheck`, and an API compatibility report against the latest release; GitHub Actions are
+  pinned by commit.
+
 ### Fixed
 
 - A template that calls `tpl` on itself crashed the server (stack overflow); `include` and `tpl`
