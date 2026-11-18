@@ -267,6 +267,10 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 			return err
 		},
 		"listener port": func() error { return c.AddGatewayListener(ctx, Listener{Name: "web", Port: 70000}) },
+		"strategy": func() error {
+			_, err := c.Upgrade(ctx, UpgradeRequest{Name: "shop", Package: demoPkg, Strategy: "blue-green"}, nil)
+			return err
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := call(); !errors.Is(err, ErrInvalid) {

@@ -125,12 +125,23 @@ func (r GatewayListenerRequest) Validate() error { return dnsLabel("listener", r
 // Validate checks the release name.
 func (r InstallRequest) Validate() error { return resource.ValidateReleaseName(r.Name) }
 
-// Validate checks the release name.
-func (r UpgradeRequest) Validate() error { return resource.ValidateReleaseName(r.Name) }
+// Validate checks the release name and the strategy.
+func (r UpgradeRequest) Validate() error {
+	return errors.Join(resource.ValidateReleaseName(r.Name), ValidateStrategy(r.Strategy))
+}
 
-// Validate checks the release name and the revision.
+// Validate checks the release name, the revision and the strategy.
 func (r RollbackRequest) Validate() error {
-	return errors.Join(resource.ValidateReleaseName(r.Name), nonNegative("revision", r.Revision))
+	return errors.Join(resource.ValidateReleaseName(r.Name), nonNegative("revision", r.Revision), ValidateStrategy(r.Strategy))
+}
+
+// ValidateStrategy checks a strategy that overrides every workload's updateStrategy: recreate,
+// replace, or empty (each workload's own).
+func ValidateStrategy(s string) error {
+	if s != "" && s != resource.StrategyRecreate && s != resource.StrategyReplace {
+		return fmt.Errorf("strategy: %q must be %s or %s", s, resource.StrategyRecreate, resource.StrategyReplace)
+	}
+	return nil
 }
 
 // Validate checks the release name.

@@ -27,6 +27,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
     is `/v1/gateway/access-log`, `/v1/gateway/listen`, `/v1/gateway/listeners/add` and
     `/v1/gateway/listeners/remove`.
   - `ErrNotRunning`, `ErrDetached` and `ErrDisconnected` are declared with the other errors.
+  - The words of a status report are constants (`DesiredApplied`, `ActualMissing`,
+    `HealthStarting`, …, and `RevisionSuperseded`), and `StatusReport.Healthy` is the rule `karga
+    status` exits 6 by. `ValidateStrategy` checks a `--strategy`; upgrade and rollback requests
+    check theirs.
 - Built and checked with Go 1.27.4 and govulncheck 1.10.0.
 
 ### Fixed

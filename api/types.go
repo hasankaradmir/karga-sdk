@@ -159,6 +159,48 @@ type ResourceStatus struct {
 	OOMKilled bool `json:"oomKilled,omitempty"`
 }
 
+// What ResourceStatus says. Desired is what the state records; Actual what the runtime has (a
+// container's state for workloads and proxies); Health a workload's health check.
+const (
+	DesiredApplied = "applied"
+	DesiredFailed  = "failed" // the resource's last apply failed
+
+	ActualCreated   = "created"
+	ActualRunning   = "running"
+	ActualExited    = "exited"
+	ActualMissing   = "missing"
+	ActualPresent   = "present"    // a Network or Volume exists
+	ActualRouted    = "routed"     // a Service's ports go to a backend
+	ActualNotRouted = "not routed" // a Service's ports go nowhere yet
+	ActualFile      = "file"       // a Config or Secret, kept as files
+
+	HealthNone      = "none" // no health check
+	HealthStarting  = "starting"
+	HealthHealthy   = "healthy"
+	HealthUnhealthy = "unhealthy"
+)
+
+// Healthy reports whether the resource is applied and runs well: present, not exited, and not
+// failing or still waiting for its health check.
+func (s ResourceStatus) Healthy() bool {
+	return s.Desired == DesiredApplied && s.Actual != ActualMissing && s.Actual != ActualExited &&
+		s.Health != HealthUnhealthy && s.Health != HealthStarting
+}
+
+// Healthy reports whether the release is deployed, no operation on it was interrupted, and every
+// resource is healthy. karga status exits 6 when it is not.
+func (r *StatusReport) Healthy() bool {
+	if r.Release.Status != StatusDeployed || r.Interrupted != "" {
+		return false
+	}
+	for _, x := range r.Resources {
+		if !x.Healthy() {
+			return false
+		}
+	}
+	return true
+}
+
 // StatusReport is the desired vs actual state of a release.
 type StatusReport struct {
 	Release   Release          `json:"release"`
