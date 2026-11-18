@@ -4,40 +4,40 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
-// Backend is what the CLI asks of karga: *Service on the server, *Client in the CLI.
-// Install and Upgrade read req.Package and req.Values.ValueFiles where they run: the client packs
-// them and sends their content.
+// Backend is what the CLI asks of karga-server: the server implements it, Client calls it over the
+// socket. progress, if not nil, receives what a deployment is doing as it happens.
 type Backend interface {
-	Install(ctx context.Context, req InstallRequest) (*Result, error)
-	Upgrade(ctx context.Context, req UpgradeRequest) (*Result, error)
-	Rollback(ctx context.Context, req RollbackRequest) (*Result, error)
-	Uninstall(ctx context.Context, req UninstallRequest) error
+	Install(ctx context.Context, req InstallRequest, progress func(Event)) (*Result, error)
+	Upgrade(ctx context.Context, req UpgradeRequest, progress func(Event)) (*Result, error)
+	Rollback(ctx context.Context, req RollbackRequest, progress func(Event)) (*Result, error)
+	Uninstall(ctx context.Context, req UninstallRequest) (*Result, error)
 
-	List(ctx context.Context) ([]release.Release, error)
-	History(ctx context.Context, name string) ([]release.Revision, error)
+	List(ctx context.Context) ([]Release, error)
+	History(ctx context.Context, name string) ([]Revision, error)
 	GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error)
 	GetNotes(ctx context.Context, name string, revision int) (string, error)
 	GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error)
 	Status(ctx context.Context, name string) (*StatusReport, error)
 	Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error)
-	Resources(ctx context.Context, name string) ([]release.AppliedResource, error)
+	Resources(ctx context.Context, name string) ([]AppliedResource, error)
 
 	Logs(ctx context.Context, req LogsRequest, w io.Writer) error
 	Exec(ctx context.Context, rel, workload string, opts ExecOptions) (int, error)
-	BackupVolume(ctx context.Context, req VolumeBackupRequest) error
-	RestoreVolume(ctx context.Context, req VolumeRestoreRequest) error
+	BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) error
+	RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error
 	BackupState(ctx context.Context, w io.Writer) error
 
 	Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error)
 	Pause(ctx context.Context, name string, paused bool) error
-	Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error)
+	Events(ctx context.Context, name string, afterID int64, limit int) ([]Operation, error)
 
 	Gateway(ctx context.Context) ([]Exposed, error)
 	GatewayHealth(ctx context.Context) (State, error)
@@ -73,13 +73,11 @@ type (
 	}
 	// deployLine is one line of a deploy response: progress events, then the outcome.
 	deployLine struct {
-		Event  *eventJSON `json:"event,omitempty"`
-		Result *Result    `json:"result,omitempty"`
-		Error  string     `json:"error,omitempty"`
-		Done   bool       `json:"done,omitempty"`
-	}
-	eventJSON struct {
-		Kind, Name, Phase, Detail string
+		Event  *Event  `json:"event,omitempty"`
+		Result *Result `json:"result,omitempty"`
+		Error  string  `json:"error,omitempty"`
+		Code   string  `json:"code,omitempty"`
+		Done   bool    `json:"done,omitempty"`
 	}
 	execRequest struct {
 		Release  string   `json:"release"`
@@ -89,11 +87,6 @@ type (
 		Stdin    bool     `json:"stdin"`
 		Width    uint     `json:"width,omitempty"`
 		Height   uint     `json:"height,omitempty"`
-	}
-	volumeRequest struct {
-		Release string `json:"release"`
-		Volume  string `json:"volume"`
-		Stop    bool   `json:"stop,omitempty"`
 	}
 	gatewaySettings struct {
 		Settings Settings            `json:"settings"`
@@ -105,30 +98,38 @@ type (
 		Add       *Listener `json:"add,omitempty"`
 		Remove    string    `json:"remove,omitempty"`
 	}
-	// revisionJSON carries the fields of a revision that its own JSON leaves out (history --diff
-	// compares them).
-	revisionJSON struct {
-		release.Revision
-		Values    map[string]any  `json:"values"`
-		ValuesAll map[string]any  `json:"valuesAll"`
-		Manifest  json.RawMessage `json:"manifest"`
-	}
 	errorResponse struct {
 		Error string `json:"error"`
+		Code  string `json:"code,omitempty"`
 	}
 )
 
 // trailerError carries an error that happened after a streamed response started.
 const trailerError = "X-Karga-Error"
 
-// Major is the API version. A karga CLI and a karga-server work together when their Major is the
-// same, whatever their release versions; the client sends it on every request.
-const Major = 1
+// The API version is Major.Minor. A karga CLI and a karga-server work together when their Major is
+// the same, whatever their release versions. A minor version only adds: new endpoints, and new
+// request fields whose zero value keeps the old behaviour. A newer client still works with an older
+// server of the same Major; what the server lacks fails with a message to upgrade it.
+const (
+	Major = 2
+	Minor = 0
+)
+
+// Version is the API version this package speaks, e.g. "2.0".
+var Version = fmt.Sprintf("%d.%d", Major, Minor)
 
 const apiHeader = "Karga-Api"
 
 // ServerVersion is what karga-server reports about itself.
 type ServerVersion struct {
 	Version string `json:"version"`
-	API     int    `json:"api"`
+	// API is the server's API version, Major.Minor.
+	API string `json:"api"`
+}
+
+// Compatible reports whether a client speaking API version client works with this server.
+func Compatible(client string) bool {
+	major, _, _ := strings.Cut(client, ".")
+	return major == strconv.Itoa(Major)
 }

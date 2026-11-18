@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// Redacted replaces writeOnly values wherever values are stored or shown.
-const Redacted = "<redacted>"
+// Any is the path element that matches every key of an object and every index of a list. Secret
+// paths contain it for writeOnly values under additionalProperties, patternProperties and items.
+const Any = "*"
 
 // SecretPaths returns the paths of every property the schema marks "writeOnly": true. Such values
 // are used to render but never stored or printed (they are typically passwords).
-// shortcut: properties under array items are not followed; mark the array itself if needed.
 func SecretPaths(schema []byte) ([][]string, error) {
 	if len(strings.TrimSpace(string(schema))) == 0 {
 		return nil, nil
@@ -42,11 +42,32 @@ func SecretPaths(schema []byte) ([][]string, error) {
 				walk(sub, append(path, name))
 			}
 		}
-		for _, k := range []string{"allOf", "anyOf", "oneOf"} {
+		// Keys matched by a pattern or not declared at all: any key (patterns are not evaluated, so
+		// this can mask more than needed, never less).
+		if props, ok := m["patternProperties"].(map[string]any); ok {
+			for _, sub := range props {
+				walk(sub, append(path, Any))
+			}
+		}
+		walk(m["additionalProperties"], append(path, Any))
+		walk(m["items"], append(path, Any))
+		for _, k := range []string{"allOf", "anyOf", "oneOf", "prefixItems"} {
 			if arr, ok := m[k].([]any); ok {
 				for _, sub := range arr {
-					walk(sub, path)
+					if k == "prefixItems" {
+						walk(sub, append(path, Any))
+					} else {
+						walk(sub, path)
+					}
 				}
+			}
+		}
+		for _, k := range []string{"if", "then", "else", "not"} {
+			walk(m[k], path)
+		}
+		if deps, ok := m["dependentSchemas"].(map[string]any); ok {
+			for _, sub := range deps {
+				walk(sub, path)
 			}
 		}
 	}
@@ -75,79 +96,27 @@ func resolvePointer(root any, ref string) any {
 	return cur
 }
 
-// Mask returns a copy of m with every present, non-nil value at paths replaced by Redacted.
-func Mask(m map[string]any, paths [][]string) map[string]any {
-	out, _ := deepCopy(m).(map[string]any)
-	for _, p := range paths {
-		cur := out
-		for i, k := range p {
-			if i == len(p)-1 {
-				if v, ok := cur[k]; ok && v != nil {
-					cur[k] = Redacted
-				}
-				break
+// At returns the values of v at path; Any matches every key or index.
+func At(v any, path []string) []any {
+	if len(path) == 0 {
+		return []any{v}
+	}
+	var out []any
+	switch t := v.(type) {
+	case map[string]any:
+		if path[0] == Any {
+			for _, c := range t {
+				out = append(out, At(c, path[1:])...)
 			}
-			next, ok := cur[k].(map[string]any)
-			if !ok {
-				break
+		} else if c, ok := t[path[0]]; ok {
+			out = At(c, path[1:])
+		}
+	case []any:
+		if path[0] == Any {
+			for _, c := range t {
+				out = append(out, At(c, path[1:])...)
 			}
-			cur = next
 		}
 	}
 	return out
-}
-
-// RedactedPaths lists the paths of m whose value is Redacted, i.e. values Mask removed.
-func RedactedPaths(m map[string]any) [][]string {
-	var out [][]string
-	var walk func(v any, path []string)
-	walk = func(v any, path []string) {
-		switch t := v.(type) {
-		case map[string]any:
-			for k, c := range t {
-				walk(c, append(path, k))
-			}
-		case string:
-			if t == Redacted {
-				out = append(out, append([]string(nil), path...))
-			}
-		}
-	}
-	walk(m, nil)
-	return out
-}
-
-// Drop returns a copy of m without the given paths.
-func Drop(m map[string]any, paths [][]string) map[string]any {
-	out, _ := deepCopy(m).(map[string]any)
-	for _, p := range paths {
-		cur := out
-		for i, k := range p {
-			if i == len(p)-1 {
-				delete(cur, k)
-				break
-			}
-			next, ok := cur[k].(map[string]any)
-			if !ok {
-				break
-			}
-			cur = next
-		}
-	}
-	return out
-}
-
-// Has reports whether m has a non-nil value at path.
-func Has(m map[string]any, path []string) bool {
-	var cur any = m
-	for _, k := range path {
-		mm, ok := cur.(map[string]any)
-		if !ok {
-			return false
-		}
-		if cur, ok = mm[k]; !ok {
-			return false
-		}
-	}
-	return cur != nil
 }

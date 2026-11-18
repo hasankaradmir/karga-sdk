@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // ServiceSpec gives one workload a stable name inside the release, served by the release proxy,
@@ -89,7 +87,7 @@ func (s *ServiceSpec) setDefaults() {
 
 func (s *ServiceSpec) validate() error {
 	var errs []error
-	if !pkg.IsDNSLabel(s.Workload) {
+	if !IsDNSLabel(s.Workload) {
 		errs = append(errs, fmt.Errorf("spec.workload: %q must name a Workload", s.Workload))
 	}
 	if len(s.Ports) == 0 {
@@ -97,7 +95,7 @@ func (s *ServiceSpec) validate() error {
 	}
 	names, numbers := map[string]bool{}, map[int]bool{}
 	for i, p := range s.Ports {
-		if !pkg.IsDNSLabel(p.Name) {
+		if !IsDNSLabel(p.Name) {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].name: %q must be a DNS label", i, p.Name))
 		}
 		if names[p.Name] {
@@ -121,7 +119,7 @@ func (s *ServiceSpec) validate() error {
 		if !names[e.Port] {
 			errs = append(errs, fmt.Errorf("%s.port: %q is not a port of the service", at, e.Port))
 		}
-		if !pkg.IsDNSLabel(e.Listener) {
+		if !IsDNSLabel(e.Listener) {
 			errs = append(errs, fmt.Errorf("%s.listener: %q must name a gateway listener", at, e.Listener))
 		}
 		if e.Host == "" {
@@ -136,7 +134,7 @@ func (s *ServiceSpec) validate() error {
 				errs = append(errs, fmt.Errorf("%s.path: %q must start with /", at, e.Path))
 			}
 		}
-		if e.TLS != nil && !pkg.IsDNSLabel(e.TLS.Secret) {
+		if e.TLS != nil && !IsDNSLabel(e.TLS.Secret) {
 			errs = append(errs, fmt.Errorf("%s.tls.secret: %q must name a Secret", at, e.TLS.Secret))
 		}
 		key := e.Listener + " " + e.Host + e.Path

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/archive"
+	"github.com/hasankaradmir/karga-sdk/internal/archive"
 )
 
 func TestLoadMinimal(t *testing.T) {
@@ -62,7 +62,7 @@ func TestLoadErrors(t *testing.T) {
 
 func TestLoadArchive(t *testing.T) {
 	var buf bytes.Buffer
-	if err := archive.Pack("testdata/minimal", &buf); err != nil {
+	if err := archive.Pack("testdata/minimal", &buf, archive.DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	tgz := filepath.Join(t.TempDir(), "minimal-0.1.0.tgz")
@@ -96,7 +96,7 @@ func TestDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := archive.Pack("testdata/minimal", &buf); err != nil {
+	if err := archive.Pack("testdata/minimal", &buf, archive.DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	tgz := filepath.Join(t.TempDir(), "m.tgz")

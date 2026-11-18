@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/archive"
+	"github.com/hasankaradmir/karga-sdk/internal/archive"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -33,10 +33,12 @@ func renderExample(t *testing.T, name, release string, opts Options) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if err := m.Print(&buf, false); err != nil {
+	docs, err := m.RedactedDocuments()
+	if err != nil {
 		t.Fatal(err)
 	}
+	var buf bytes.Buffer
+	printDocs(&buf, m.Package.Name, docs)
 	return buf.Bytes()
 }
 
@@ -84,10 +86,10 @@ func TestExamplesLint(t *testing.T) {
 func TestExamplesPackReproducible(t *testing.T) {
 	for _, ex := range examples {
 		var a, b bytes.Buffer
-		if err := archive.Pack(examplePath(ex.name), &a); err != nil {
+		if err := archive.Pack(examplePath(ex.name), &a, archive.DefaultLimits); err != nil {
 			t.Fatal(err)
 		}
-		if err := archive.Pack(examplePath(ex.name), &b); err != nil {
+		if err := archive.Pack(examplePath(ex.name), &b, archive.DefaultLimits); err != nil {
 			t.Fatal(err)
 		}
 		da, _ := archive.Digest(&a)

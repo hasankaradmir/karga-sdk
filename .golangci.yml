@@ -1,23 +1,18 @@
 version: "2"
 
-run:
-  build-tags:
-    - integration
-    - e2e
-
 linters:
   enable:
     - depguard
   settings:
     depguard:
       rules:
-        # The SDK (domain, package engine, API) is shared by the CLI and the server: it must not
-        # know the runtime or the state database.
+        # The SDK (wire contract, package format) is shared by the CLI and the server: it must not
+        # know either of them, the runtime or the state database.
         sdk:
           files:
             - "$all"
           deny:
-            - pkg: github.com/hasankaradmir/karga/
+            - pkg: github.com/hasankaradmir/karga-cli/
               desc: the SDK must not depend on the CLI
             - pkg: github.com/hasankaradmir/karga-server
               desc: the SDK must not depend on karga-server
@@ -27,6 +22,18 @@ linters:
               desc: the SDK must not depend on Docker
             - pkg: modernc.org/sqlite
               desc: the SDK must not depend on SQLite
+        # The wire contract does not depend on the package engine: API clients need neither
+        # templates nor JSON Schema.
+        api:
+          files:
+            - "**/api/*.go"
+          deny:
+            - pkg: github.com/hasankaradmir/karga-sdk/packages
+              desc: api must not depend on the package engine
+            - pkg: github.com/hasankaradmir/karga-sdk/internal/renderer
+              desc: api must not depend on the package engine
+            - pkg: github.com/hasankaradmir/karga-sdk/internal/values
+              desc: api must not depend on the package engine
 
 formatters:
   enable:

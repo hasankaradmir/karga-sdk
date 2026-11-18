@@ -1,4 +1,4 @@
-package pkg
+package packages
 
 import (
 	"strings"
@@ -17,7 +17,7 @@ func valid() Metadata {
 	}
 }
 
-func TestValidate(t *testing.T) {
+func TestMetadataValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		mutate  func(*Metadata)
@@ -50,7 +50,7 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestValidateReportsAllErrors(t *testing.T) {
+func TestMetadataValidateReportsAllErrors(t *testing.T) {
 	err := Metadata{}.Validate()
 	for _, want := range []string{"apiVersion", "name", "version", "runtime.supported"} {
 		if err == nil || !strings.Contains(err.Error(), want) {

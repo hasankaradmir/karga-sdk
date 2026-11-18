@@ -8,13 +8,54 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Masterminds/sprig/v3"
 	"go.yaml.in/yaml/v3"
 )
 
-// maxIncludeDepth stops runaway recursion such as a template that includes itself.
-const maxIncludeDepth = 100
+// Limits that keep an untrusted package from exhausting the server that renders it.
+const (
+	// maxIncludeDepth stops runaway recursion through include and tpl, e.g. a template that includes itself.
+	maxIncludeDepth = 100
+	// maxOutput caps the bytes one Render may write, nested include and tpl output included.
+	maxOutput = 16 << 20
+	// maxItems caps the lists until, untilStep and seq may build.
+	maxItems = 10000
+	// renderTimeout bounds one Render; checked whenever output is written or a template is entered.
+	renderTimeout = 10 * time.Second
+)
+
+// budget is shared by everything one Render executes.
+type budget struct {
+	depth    int
+	written  int
+	deadline time.Time
+}
+
+func (b *budget) check() error {
+	if b.written > maxOutput {
+		return fmt.Errorf("rendered output exceeds %d bytes", maxOutput)
+	}
+	if time.Now().After(b.deadline) {
+		return fmt.Errorf("rendering took longer than %s", renderTimeout)
+	}
+	return nil
+}
+
+// limitedBuffer is a bytes.Buffer that charges every write to the render budget.
+type limitedBuffer struct {
+	bytes.Buffer
+	b *budget
+}
+
+func (w *limitedBuffer) Write(p []byte) (int, error) {
+	w.b.written += len(p)
+	if err := w.b.check(); err != nil {
+		return 0, err
+	}
+	return w.Buffer.Write(p)
+}
 
 // Context is the data available to templates as the dot.
 type Context struct {
@@ -52,8 +93,9 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 	}
 	sort.Strings(names)
 
+	b := &budget{deadline: time.Now().Add(renderTimeout)}
 	root := template.New("").Option("missingkey=default")
-	root.Funcs(funcMap(root))
+	root.Funcs(funcMap(root, b))
 	for _, n := range names {
 		if _, err := root.New(n).Parse(string(templates[n])); err != nil {
 			return nil, err
@@ -65,7 +107,7 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 		if strings.HasPrefix(path.Base(n), "_") {
 			continue
 		}
-		var buf bytes.Buffer
+		buf := limitedBuffer{b: b}
 		if err := root.ExecuteTemplate(&buf, n, ctx); err != nil {
 			return nil, err
 		}
@@ -97,7 +139,7 @@ func init() {
 	}
 }
 
-func funcMap(root *template.Template) template.FuncMap {
+func funcMap(root *template.Template, b *budget) template.FuncMap {
 	fm := sprig.TxtFuncMap()
 	for name, reason := range denied {
 		fm[name] = deniedFunc(name, reason)
@@ -105,34 +147,43 @@ func funcMap(root *template.Template) template.FuncMap {
 	// sprig's keys/values follow map iteration order; sort them so output is deterministic.
 	fm["keys"] = sortedKeys
 	fm["values"] = sortedValues
+	limitSizes(fm)
 
-	depth := 0
-	fm["include"] = func(name string, data any) (string, error) {
-		if depth >= maxIncludeDepth {
-			return "", fmt.Errorf("include %q: nested too deeply (limit %d)", name, maxIncludeDepth)
+	// nest runs fn one level deeper; include and tpl share the depth so they cannot recurse through each other.
+	nest := func(what string, fn func(*limitedBuffer) error) (string, error) {
+		if b.depth >= maxIncludeDepth {
+			return "", fmt.Errorf("%s: nested too deeply (limit %d)", what, maxIncludeDepth)
 		}
-		depth++
-		defer func() { depth-- }()
-		var buf bytes.Buffer
-		if err := root.ExecuteTemplate(&buf, name, data); err != nil {
+		if err := b.check(); err != nil {
+			return "", err
+		}
+		b.depth++
+		defer func() { b.depth-- }()
+		buf := limitedBuffer{b: b}
+		if err := fn(&buf); err != nil {
 			return "", err
 		}
 		return clean(buf.String()), nil
 	}
+	fm["include"] = func(name string, data any) (string, error) {
+		return nest(fmt.Sprintf("include %q", name), func(buf *limitedBuffer) error {
+			return root.ExecuteTemplate(buf, name, data)
+		})
+	}
 	fm["tpl"] = func(text string, data any) (string, error) {
-		t, err := root.Clone()
-		if err != nil {
-			return "", err
-		}
-		t, err = t.New("\x00tpl").Parse(text)
-		if err != nil {
-			return "", fmt.Errorf("tpl: %w", err)
-		}
-		var buf bytes.Buffer
-		if err := t.Execute(&buf, data); err != nil {
-			return "", fmt.Errorf("tpl: %w", err)
-		}
-		return clean(buf.String()), nil
+		return nest("tpl", func(buf *limitedBuffer) error {
+			t, err := root.Clone()
+			if err != nil {
+				return err
+			}
+			if t, err = t.New("\x00tpl").Parse(text); err != nil {
+				return fmt.Errorf("tpl: %w", err)
+			}
+			if err := t.Execute(buf, data); err != nil {
+				return fmt.Errorf("tpl: %w", err)
+			}
+			return nil
+		})
 	}
 	fm["required"] = func(msg string, v any) (any, error) {
 		if v == nil {
@@ -198,4 +249,71 @@ func sortedValues(dict map[string]any) []any {
 		vs[i] = dict[k]
 	}
 	return vs
+}
+
+// limitSizes wraps the sprig functions whose result size an argument controls.
+func limitSizes(fm template.FuncMap) {
+	tooLarge := func(name string, n int) error {
+		return fmt.Errorf("%s: result too large (%d)", name, n)
+	}
+	until := fm["until"].(func(int) []int)
+	fm["until"] = func(n int) ([]int, error) {
+		if abs(n) > maxItems {
+			return nil, tooLarge("until", n)
+		}
+		return until(n), nil
+	}
+	untilStep := fm["untilStep"].(func(int, int, int) []int)
+	fm["untilStep"] = func(start, stop, step int) ([]int, error) {
+		if step != 0 && (stop-start)/step > maxItems {
+			return nil, tooLarge("untilStep", (stop-start)/step)
+		}
+		return untilStep(start, stop, step), nil
+	}
+	seq := fm["seq"].(func(...int) string)
+	fm["seq"] = func(p ...int) (string, error) {
+		if n := seqLen(p); n > maxItems {
+			return "", tooLarge("seq", n)
+		}
+		return seq(p...), nil
+	}
+	repeat := fm["repeat"].(func(int, string) string)
+	fm["repeat"] = func(n int, s string) (string, error) {
+		if n > 0 && n*max(len(s), 1) > maxOutput {
+			return "", tooLarge("repeat", n)
+		}
+		return repeat(n, s), nil
+	}
+	for _, name := range []string{"indent", "nindent"} {
+		indent := fm[name].(func(int, string) string)
+		fm[name] = func(n int, s string) (string, error) {
+			if n > 0 && n*(strings.Count(s, "\n")+1) > maxOutput {
+				return "", tooLarge(name, n)
+			}
+			return indent(n, s), nil
+		}
+	}
+}
+
+// seqLen is how many numbers seq prints for its 1 to 3 arguments (end; start end; start step end).
+func seqLen(p []int) int {
+	switch len(p) {
+	case 1:
+		return abs(p[0])
+	case 2:
+		return abs(p[1]-p[0]) + 1
+	case 3:
+		if p[1] == 0 {
+			return 0
+		}
+		return abs((p[2]-p[0])/p[1]) + 1
+	}
+	return 0
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

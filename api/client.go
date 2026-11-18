@@ -15,10 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hasankaradmir/karga-sdk/archive"
-	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga-sdk/plan"
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/internal/archive"
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
@@ -49,7 +46,7 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 	for k, v := range header {
 		req.Header[k] = v
 	}
-	req.Header.Set(apiHeader, strconv.Itoa(Major))
+	req.Header.Set(apiHeader, Version)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		var op *net.OpError
@@ -64,7 +61,7 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 		if err := json.NewDecoder(resp.Body).Decode(&e); err != nil || e.Error == "" {
 			return nil, fmt.Errorf("karga-server: %s", resp.Status)
 		}
-		return nil, errors.New(e.Error)
+		return nil, remote(e.Error, e.Code)
 	}
 	return resp, nil
 }
@@ -104,48 +101,38 @@ func packPackage(path string) ([]byte, error) {
 		return os.ReadFile(path)
 	}
 	var buf bytes.Buffer
-	if err := archive.Pack(path, &buf); err != nil {
+	if err := archive.Pack(path, &buf, archive.DefaultLimits); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return buf.Bytes(), nil
 }
 
-// readValues moves values files into the request as content: the server cannot read the client's files.
-func readValues(opts *packages.Options) error {
-	for _, f := range opts.ValueFiles {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			return err
-		}
-		opts.ValueData = append(opts.ValueData, data)
-	}
-	opts.ValueFiles = nil
-	return nil
-}
-
-func (c *Client) deploy(ctx context.Context, name string, req deployRequest, progress func(plan.Event)) (*Result, error) {
+func (c *Client) deploy(ctx context.Context, req deployRequest, progress func(Event)) (*Result, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	var res *Result
 	resp, err := c.post(ctx, "/v1/deploy", bytes.NewReader(body), nil)
-	if err == nil {
-		res, err = c.follow(ctx, resp, progress)
+	if err != nil {
+		return nil, err
 	}
-	switch {
-	case ctx.Err() != nil && !errors.Is(err, ErrNotRunning):
-		return nil, fmt.Errorf("%w: once sent, the operation goes on in karga-server; follow it with 'karga events -f %s'", ctx.Err(), name)
-	case errors.Is(err, errDisconnected):
-		return nil, fmt.Errorf("%w; karga-server finishes it when it runs again: see 'karga events %s'", err, name)
+	res, err := c.follow(ctx, resp, progress)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
 	}
 	return res, err
 }
 
-var errDisconnected = errors.New("karga-server closed the connection before the operation ended")
+// ErrDetached is returned when the caller stopped waiting for an operation the server had already
+// received: it goes on in karga-server, and its events show how it ends.
+var ErrDetached = errors.New("stopped waiting; the operation goes on in karga-server")
+
+// ErrDisconnected is returned when the server went away during an operation; karga-server finishes
+// it when it runs again.
+var ErrDisconnected = errors.New("karga-server closed the connection before the operation ended")
 
 // follow reads the progress lines of a deploy response until its outcome.
-func (c *Client) follow(_ context.Context, resp *http.Response, progress func(plan.Event)) (*Result, error) {
+func (c *Client) follow(_ context.Context, resp *http.Response, progress func(Event)) (*Result, error) {
 	defer func() { _ = resp.Body.Close() }()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
@@ -155,79 +142,60 @@ func (c *Client) follow(_ context.Context, resp *http.Response, progress func(pl
 			return nil, fmt.Errorf("karga-server: %w", err)
 		}
 		if l.Event != nil && progress != nil {
-			progress(plan.Event{Kind: l.Event.Kind, Name: l.Event.Name, Phase: l.Event.Phase, Detail: l.Event.Detail})
+			progress(*l.Event)
 		}
 		if l.Done {
 			if l.Error != "" {
-				return l.Result, errors.New(l.Error)
+				return l.Result, remote(l.Error, l.Code)
 			}
 			return l.Result, nil
 		}
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("%w: %w", errDisconnected, err)
+		return nil, fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
-	return nil, errDisconnected
+	return nil, ErrDisconnected
 }
 
 // Install implements Backend.
-func (c *Client) Install(ctx context.Context, req InstallRequest) (*Result, error) {
+func (c *Client) Install(ctx context.Context, req InstallRequest, progress func(Event)) (*Result, error) {
 	pkg, err := packPackage(req.Package)
 	if err != nil {
 		return nil, err
 	}
-	if err := readValues(&req.Values); err != nil {
-		return nil, err
-	}
-	progress := req.Progress
-	req.Progress, req.Package = nil, ""
-	return c.deploy(ctx, req.Name, deployRequest{Install: &req, Package: pkg}, progress)
+	return c.deploy(ctx, deployRequest{Install: &req, Package: pkg}, progress)
 }
 
 // Upgrade implements Backend.
-func (c *Client) Upgrade(ctx context.Context, req UpgradeRequest) (*Result, error) {
+func (c *Client) Upgrade(ctx context.Context, req UpgradeRequest, progress func(Event)) (*Result, error) {
 	pkg, err := packPackage(req.Package)
 	if err != nil {
 		return nil, err
 	}
-	if err := readValues(&req.Values); err != nil {
-		return nil, err
-	}
-	progress := req.Progress
-	req.Progress, req.Package = nil, ""
-	return c.deploy(ctx, req.Name, deployRequest{Upgrade: &req, Package: pkg}, progress)
+	return c.deploy(ctx, deployRequest{Upgrade: &req, Package: pkg}, progress)
 }
 
 // Rollback implements Backend.
-func (c *Client) Rollback(ctx context.Context, req RollbackRequest) (*Result, error) {
-	progress := req.Progress
-	req.Progress = nil
-	return c.deploy(ctx, req.Name, deployRequest{Rollback: &req}, progress)
+func (c *Client) Rollback(ctx context.Context, req RollbackRequest, progress func(Event)) (*Result, error) {
+	return c.deploy(ctx, deployRequest{Rollback: &req}, progress)
 }
 
 // Uninstall implements Backend.
-func (c *Client) Uninstall(ctx context.Context, req UninstallRequest) error {
-	return c.call(ctx, "/v1/uninstall", req, nil)
+func (c *Client) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
+	var out *Result
+	return out, c.call(ctx, "/v1/uninstall", req, &out)
 }
 
 // List implements Backend.
-func (c *Client) List(ctx context.Context) ([]release.Release, error) {
-	var out []release.Release
+func (c *Client) List(ctx context.Context) ([]Release, error) {
+	var out []Release
 	return out, c.call(ctx, "/v1/list", struct{}{}, &out)
 }
 
 // History implements Backend.
-func (c *Client) History(ctx context.Context, name string) ([]release.Revision, error) {
-	var in []revisionJSON
-	if err := c.call(ctx, "/v1/history", nameRequest{Name: name}, &in); err != nil {
-		return nil, err
-	}
-	out := make([]release.Revision, len(in))
-	for i, r := range in {
-		out[i] = r.Revision
-		out[i].Values, out[i].ValuesAll, out[i].Manifest = r.Values, r.ValuesAll, r.Manifest
-	}
-	return out, nil
+func (c *Client) History(ctx context.Context, name string) ([]Revision, error) {
+	var out []Revision
+	return out, c.call(ctx, "/v1/history", nameRequest{Name: name}, &out)
 }
 
 // GetValues implements Backend.
@@ -272,8 +240,8 @@ func (c *Client) Diff(ctx context.Context, name string, from, to int) (*Revision
 }
 
 // Resources implements Backend.
-func (c *Client) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
-	var out []release.AppliedResource
+func (c *Client) Resources(ctx context.Context, name string) ([]AppliedResource, error) {
+	var out []AppliedResource
 	return out, c.call(ctx, "/v1/resources", nameRequest{Name: name}, &out)
 }
 
@@ -306,14 +274,14 @@ func (c *Client) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 }
 
 // BackupVolume implements Backend.
-func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest) error {
-	return c.download(ctx, "/v1/volume/backup", volumeRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, req.W)
+func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) error {
+	return c.download(ctx, "/v1/volume/backup", req, w)
 }
 
 // RestoreVolume implements Backend.
-func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest) error {
+func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error {
 	q := url.Values{"release": {req.Release}, "volume": {req.Volume}, "name": {req.Name}, "force": {strconv.FormatBool(req.Force)}}
-	resp, err := c.post(ctx, "/v1/volume/restore?"+q.Encode(), req.R, http.Header{"Content-Type": {"application/gzip"}})
+	resp, err := c.post(ctx, "/v1/volume/restore?"+q.Encode(), r, http.Header{"Content-Type": {"application/gzip"}})
 	if err != nil {
 		return err
 	}
@@ -444,7 +412,7 @@ func (c *Client) Pause(ctx context.Context, name string, paused bool) error {
 }
 
 // Events implements Backend.
-func (c *Client) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
-	var out []release.Operation
+func (c *Client) Events(ctx context.Context, name string, afterID int64, limit int) ([]Operation, error) {
+	var out []Operation
 	return out, c.call(ctx, "/v1/events", nameRequest{Name: name, After: afterID, Limit: limit}, &out)
 }

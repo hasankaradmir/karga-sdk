@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestPackDeterministicAndRoundTrip(t *testing.T) {
 	dir := writeTree(t, tree)
 
 	var a, b bytes.Buffer
-	if err := Pack(dir, &a); err != nil {
+	if err := Pack(dir, &a, DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	// Different mtimes must not change the archive.
@@ -40,7 +41,7 @@ func TestPackDeterministicAndRoundTrip(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "templates/a.yaml"), later, later); err != nil {
 		t.Fatal(err)
 	}
-	if err := Pack(dir, &b); err != nil {
+	if err := Pack(dir, &b, DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(a.Bytes(), b.Bytes()) {
@@ -69,7 +70,7 @@ func TestPackRejectsSymlink(t *testing.T) {
 	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "hosts")); err != nil {
 		t.Fatal(err)
 	}
-	if err := Pack(dir, &bytes.Buffer{}); err == nil {
+	if err := Pack(dir, &bytes.Buffer{}, DefaultLimits); err == nil {
 		t.Fatal("expected symlink error")
 	}
 }
@@ -140,11 +141,64 @@ func TestUnpackRejectsHarmfulArchives(t *testing.T) {
 		{"too big", makeTar(t, entry{name: "a/x", body: strings.Repeat("x", 100)}), Limits{MaxBytes: 50, MaxFiles: 10}, "larger than"},
 		{"too many files", makeTar(t, entry{name: "a/x", body: "1"}, entry{name: "a/y", body: "2"}), Limits{MaxBytes: 50, MaxFiles: 1}, "more than 1 files"},
 		{"not gzip", []byte("plain text"), DefaultLimits, "not a gzip archive"},
+		{"big AppleDouble", makeTar(t, entry{name: "a/._x", body: strings.Repeat("x", 100)}, entry{name: "a/y", body: "1"}), Limits{MaxBytes: 50, MaxFiles: 10}, "larger than"},
+		{"many dirs", makeTar(t, entry{name: "a/", typeflag: tar.TypeDir}, entry{name: "a/b/", typeflag: tar.TypeDir}, entry{name: "a/y", body: "1"}), Limits{MaxBytes: 50, MaxFiles: 2}, "more than 2 files"},
 	}
 	for _, tt := range tests {
 		_, err := Unpack(bytes.NewReader(tt.data), tt.limits)
 		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 			t.Errorf("%s: want error containing %q, got %v", tt.name, tt.wantErr, err)
 		}
+	}
+}
+
+func TestReadDirIgnore(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"Package.yaml":     "x",
+		".kargaignore":     "# local junk\n*.env\nbuild/\n",
+		"prod.env":         "SECRET=1",
+		"templates/a.yaml": "a",
+		"templates/b.env":  "b",
+		"build/out":        "o",
+		".git/config":      "c",
+		"files/build":      "keep: build/ matches directories only",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReadDir(dir, DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for n := range got {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if want := []string{"Package.yaml", "files/build", "templates/a.yaml"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("got %v, want %v", names, want)
+	}
+
+	// Pack holds exactly what ReadDir reads.
+	var buf bytes.Buffer
+	if err := Pack(dir, &buf, DefaultLimits); err != nil {
+		t.Fatal(err)
+	}
+	unpacked, err := Unpack(&buf, DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(unpacked, got) {
+		t.Fatalf("Pack and ReadDir differ: %v vs %v", unpacked, got)
+	}
+
+	if _, err := ReadDir(dir, Limits{MaxBytes: 2, MaxFiles: 10}); err == nil || !strings.Contains(err.Error(), IgnoreFile) {
+		t.Fatalf("want a size error naming %s, got %v", IgnoreFile, err)
 	}
 }

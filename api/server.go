@@ -10,75 +10,82 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
-
-	"github.com/hasankaradmir/karga-sdk/plan"
+	"strings"
+	"time"
 )
 
-// Server serves a Backend over HTTP. Errors keep their message; the status code is only a hint.
+// Server serves a Backend over HTTP.
 type Server struct {
 	b       Backend
 	version string
+	opts    Options
 	mux     *http.ServeMux
 }
 
-// statusOf maps an error to an HTTP status (karga-server sets it with SetStatus).
-var statusOf = func(error) int { return http.StatusBadRequest }
-
-// SetStatus sets how errors map to HTTP status codes; the client only shows their messages.
-func SetStatus(fn func(error) int) { statusOf = fn }
+// Options tune a Server; zero values use the defaults.
+type Options struct {
+	// MaxRequest bounds request bodies other than volume restores (default 64 MiB: a package archive
+	// is the largest).
+	MaxRequest int64
+	// TempDir holds uploaded packages and volume backups while they are used (default os.TempDir()).
+	TempDir string
+	// Classify returns the kind (ErrNotFound, ErrConflict, ErrInvalid) of an error the Backend
+	// returned that does not wrap one already, or nil: the client then sees an internal error.
+	Classify func(error) error
+}
 
 // NewServer serves b; version is reported to clients.
-func NewServer(b Backend, version string) *Server {
-	s := &Server{b: b, version: version, mux: http.NewServeMux()}
+func NewServer(b Backend, version string, opts Options) *Server {
+	if opts.MaxRequest == 0 {
+		opts.MaxRequest = 64 << 20
+	}
+	if opts.Classify == nil {
+		opts.Classify = func(error) error { return nil }
+	}
+	s := &Server{b: b, version: version, opts: opts, mux: http.NewServeMux()}
 	s.mux.HandleFunc("POST /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, ServerVersion{Version: s.version, API: Major})
+		writeJSON(w, ServerVersion{Version: s.version, API: Version})
 	})
 	s.mux.HandleFunc("POST /v1/deploy", s.deploy)
-	s.mux.HandleFunc("POST /v1/uninstall", mutation(func(ctx context.Context, req UninstallRequest) (any, error) {
-		return struct{}{}, b.Uninstall(ctx, req)
+	s.mux.HandleFunc("POST /v1/uninstall", mutation(s, func(ctx context.Context, req UninstallRequest) (any, error) {
+		return b.Uninstall(ctx, req)
 	}))
-	s.mux.HandleFunc("POST /v1/list", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.List(ctx) }))
-	s.mux.HandleFunc("POST /v1/history", handle(func(ctx context.Context, req nameRequest) (any, error) {
-		revs, err := b.History(ctx, req.Name)
-		out := make([]revisionJSON, len(revs))
-		for i, r := range revs {
-			out[i] = revisionJSON{Revision: r, Values: r.Values, ValuesAll: r.ValuesAll, Manifest: r.Manifest}
-		}
-		return out, err
+	s.mux.HandleFunc("POST /v1/list", handle(s, func(ctx context.Context, _ struct{}) (any, error) { return b.List(ctx) }))
+	s.mux.HandleFunc("POST /v1/history", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
+		return b.History(ctx, req.Name)
 	}))
-	s.mux.HandleFunc("POST /v1/values", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/values", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.GetValues(ctx, req.Name, req.Revision, req.All)
 	}))
-	s.mux.HandleFunc("POST /v1/notes", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/notes", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.GetNotes(ctx, req.Name, req.Revision)
 	}))
-	s.mux.HandleFunc("POST /v1/manifest", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/manifest", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.GetManifest(ctx, req.Name, req.Revision)
 	}))
-	s.mux.HandleFunc("POST /v1/status", handle(func(ctx context.Context, req nameRequest) (any, error) { return b.Status(ctx, req.Name) }))
-	s.mux.HandleFunc("POST /v1/diff", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/status", handle(s, func(ctx context.Context, req nameRequest) (any, error) { return b.Status(ctx, req.Name) }))
+	s.mux.HandleFunc("POST /v1/diff", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Diff(ctx, req.Name, req.From, req.To)
 	}))
-	s.mux.HandleFunc("POST /v1/resources", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/resources", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Resources(ctx, req.Name)
 	}))
-	s.mux.HandleFunc("POST /v1/reconcile", mutation(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/reconcile", mutation(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Reconcile(ctx, req.Name, req.Force)
 	}))
-	s.mux.HandleFunc("POST /v1/pause", mutation(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/pause", mutation(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return struct{}{}, b.Pause(ctx, req.Name, req.Paused)
 	}))
-	s.mux.HandleFunc("POST /v1/events", handle(func(ctx context.Context, req nameRequest) (any, error) {
+	s.mux.HandleFunc("POST /v1/events", handle(s, func(ctx context.Context, req nameRequest) (any, error) {
 		return b.Events(ctx, req.Name, req.After, req.Limit)
 	}))
-	s.mux.HandleFunc("POST /v1/gateway/routes", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.Gateway(ctx) }))
-	s.mux.HandleFunc("POST /v1/gateway/health", handle(func(ctx context.Context, _ struct{}) (any, error) { return b.GatewayHealth(ctx) }))
-	s.mux.HandleFunc("POST /v1/gateway/settings", handle(func(ctx context.Context, _ struct{}) (any, error) {
+	s.mux.HandleFunc("POST /v1/gateway/routes", handle(s, func(ctx context.Context, _ struct{}) (any, error) { return b.Gateway(ctx) }))
+	s.mux.HandleFunc("POST /v1/gateway/health", handle(s, func(ctx context.Context, _ struct{}) (any, error) { return b.GatewayHealth(ctx) }))
+	s.mux.HandleFunc("POST /v1/gateway/settings", handle(s, func(ctx context.Context, _ struct{}) (any, error) {
 		settings, users, err := b.GatewaySettings(ctx)
 		return gatewaySettings{settings, users}, err
 	}))
-	s.mux.HandleFunc("POST /v1/gateway/change", mutation(func(ctx context.Context, req gatewayChange) (any, error) {
+	s.mux.HandleFunc("POST /v1/gateway/change", mutation(s, func(ctx context.Context, req gatewayChange) (any, error) {
 		switch {
 		case req.AccessLog != nil:
 			return struct{}{}, b.SetGatewayAccessLog(ctx, *req.AccessLog)
@@ -98,51 +105,64 @@ func NewServer(b Backend, version string) *Server {
 	return s
 }
 
-// ServeHTTP implements http.Handler.
-// ServeHTTP refuses requests of another API version; /v1/version answers every client.
+// ServeHTTP implements http.Handler. It refuses clients of another Major API version;
+// /v1/version answers every client.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if got := r.Header.Get(apiHeader); got != strconv.Itoa(Major) && r.URL.Path != "/v1/version" {
-		writeError(w, apiMismatch(got))
+	if got := r.Header.Get(apiHeader); !Compatible(got) && r.URL.Path != "/v1/version" {
+		s.writeError(w, apiMismatch(got))
+		return
+	}
+	if _, pattern := s.mux.Handler(r); pattern == "" {
+		s.writeError(w, fmt.Errorf("%w: karga-server (API %s) does not know %s; upgrade karga-server", ErrNotFound, Version, r.URL.Path))
 		return
 	}
 	s.mux.ServeHTTP(w, r)
 }
 
 func apiMismatch(client string) error {
-	n, _ := strconv.Atoi(client)
 	upgrade := "karga"
-	if n > Major {
+	if n, _ := strconv.Atoi(strings.SplitN(client, ".", 2)[0]); n > Major {
 		upgrade = "karga-server"
 	}
 	if client == "" {
 		client = "none"
 	}
-	return fmt.Errorf("karga speaks API %s, karga-server API %d: upgrade %s", client, Major, upgrade)
+	return fmt.Errorf("%w: karga speaks API %s, karga-server API %s: upgrade %s", ErrIncompatible, client, Version, upgrade)
 }
-
-// maxRequest bounds request bodies other than volume restores (a package archive is the largest).
-const maxRequest = 64 << 20
 
 // mutation is handle for requests that change something: they go on to the end when the client
 // goes away (Ctrl-C, a broken connection), so nothing is left half done because of the client.
-func mutation[Req any](fn func(context.Context, Req) (any, error)) http.HandlerFunc {
-	return handle(func(ctx context.Context, req Req) (any, error) { return fn(context.WithoutCancel(ctx), req) })
+func mutation[Req any](s *Server, fn func(context.Context, Req) (any, error)) http.HandlerFunc {
+	return handle(s, func(ctx context.Context, req Req) (any, error) { return fn(context.WithoutCancel(ctx), req) })
 }
 
-func handle[Req any](fn func(context.Context, Req) (any, error)) http.HandlerFunc {
+func handle[Req any](s *Server, fn func(context.Context, Req) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
-		if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			writeError(w, fmt.Errorf("bad request: %w", err))
+		if !s.decode(w, r, &req) {
 			return
 		}
 		out, err := fn(r.Context(), req)
 		if err != nil {
-			writeError(w, err)
+			s.writeError(w, err)
 			return
 		}
 		writeJSON(w, out)
 	}
+}
+
+// decode reads the JSON request body into v; on failure it answers the request and returns false.
+// An empty body leaves v as it is.
+func (s *Server) decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	err := json.NewDecoder(io.LimitReader(r.Body, s.opts.MaxRequest)).Decode(v)
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		err = fmt.Errorf("request larger than %d bytes or cut short", s.opts.MaxRequest)
+	}
+	s.writeError(w, fmt.Errorf("%w: %w", ErrInvalid, err))
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -150,47 +170,68 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, err error) {
+// codeOf is the error code and HTTP status the client gets for err.
+func (s *Server) codeOf(err error) (string, int) {
+	code, status := kindOf(err)
+	if code == "internal" {
+		if kind := s.opts.Classify(err); kind != nil {
+			code, status = kindOf(kind)
+		}
+	}
+	return code, status
+}
+
+func (s *Server) writeError(w http.ResponseWriter, err error) {
+	code, status := s.codeOf(err)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusOf(err))
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error(), Code: code})
 }
 
 // deploy runs an install, upgrade or rollback, streaming progress events as JSON lines.
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	var req deployRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil {
-		writeError(w, fmt.Errorf("bad request: %w", err))
+	if !s.decode(w, r, &req) {
 		return
 	}
 	var pkgPath string
 	if req.Package != nil {
-		dir, err := os.MkdirTemp("", "karga-package-")
+		dir, err := os.MkdirTemp(s.opts.TempDir, "karga-package-")
 		if err != nil {
-			writeError(w, err)
+			s.writeError(w, err)
 			return
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
 		pkgPath = filepath.Join(dir, "package.tgz")
 		if err := os.WriteFile(pkgPath, req.Package, 0o600); err != nil {
-			writeError(w, err)
+			s.writeError(w, err)
 			return
 		}
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
-	flusher, _ := w.(http.Flusher)
-	var mu sync.Mutex
-	enc := json.NewEncoder(w)
-	send := func(l deployLine) {
-		mu.Lock()
-		defer mu.Unlock()
-		_ = enc.Encode(l)
-		if flusher != nil {
-			flusher.Flush()
+	// The client knows the operation was received once the headers arrive.
+	w.WriteHeader(http.StatusOK)
+	_ = http.NewResponseController(w).Flush()
+	// Lines are written by one goroutine so a slow or stopped client never holds up the operation:
+	// progress events are dropped when it falls behind, and a stalled write gives up after a while.
+	lines := make(chan deployLine, 64)
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		rc := http.NewResponseController(w)
+		enc := json.NewEncoder(w)
+		for l := range lines {
+			_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if enc.Encode(l) == nil {
+				_ = rc.Flush()
+			}
 		}
-	}
-	progress := func(e plan.Event) {
-		send(deployLine{Event: &eventJSON{e.Kind, e.Name, e.Phase, e.Detail}})
+	}()
+	progress := func(e Event) {
+		select {
+		case lines <- deployLine{Event: &e}:
+		default: // the client is behind; it still gets the result
+		}
 	}
 	// The operation goes on if the client goes away; only its progress reports are lost.
 	ctx := context.WithoutCancel(r.Context())
@@ -199,25 +240,29 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case req.Install != nil:
 		in := *req.Install
-		in.Package, in.Values.ValueFiles, in.Progress = pkgPath, nil, progress
-		res, err = s.b.Install(ctx, in)
+		in.Package = pkgPath
+		res, err = s.b.Install(ctx, in, progress)
 	case req.Upgrade != nil:
 		in := *req.Upgrade
-		in.Package, in.Values.ValueFiles, in.Progress = pkgPath, nil, progress
-		res, err = s.b.Upgrade(ctx, in)
+		in.Package = pkgPath
+		res, err = s.b.Upgrade(ctx, in, progress)
 	case req.Rollback != nil:
-		in := *req.Rollback
-		in.Progress = progress
-		res, err = s.b.Rollback(ctx, in)
+		res, err = s.b.Rollback(ctx, *req.Rollback, progress)
 	default:
-		err = errors.New("bad request: no install, upgrade or rollback")
+		err = fmt.Errorf("%w: no install, upgrade or rollback", ErrInvalid)
 	}
 	line := deployLine{Result: res, Done: true}
 	if err != nil {
 		line.Error = err.Error()
+		line.Code, _ = s.codeOf(err)
 	}
-	send(line)
+	lines <- line
+	close(lines)
+	<-written
 }
+
+// writeTimeout bounds one write to a client that stopped reading.
+const writeTimeout = 10 * time.Second
 
 // streamed writes a streamed response body; an error after the body started goes in a trailer.
 func streamed(w http.ResponseWriter, contentType string, fn func(io.Writer) error) {
@@ -238,8 +283,7 @@ func streamed(w http.ResponseWriter, contentType string, fn func(io.Writer) erro
 
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 	var req LogsRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil {
-		writeError(w, fmt.Errorf("bad request: %w", err))
+	if !s.decode(w, r, &req) {
 		return
 	}
 	streamed(w, "text/plain", func(out io.Writer) error {
@@ -252,23 +296,38 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) volumeBackup(w http.ResponseWriter, r *http.Request) {
-	var req volumeRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil {
-		writeError(w, fmt.Errorf("bad request: %w", err))
+	var req VolumeBackupRequest
+	if !s.decode(w, r, &req) {
 		return
 	}
 	streamed(w, "application/gzip", func(out io.Writer) error {
-		return s.b.BackupVolume(r.Context(), VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop, W: out})
+		return s.b.BackupVolume(r.Context(), req, out)
 	})
 }
 
+// volumeRestore receives the whole backup before it touches the volume, then restores it to the
+// end even if the client goes away: a restore cut short would leave the volume half overwritten.
 func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	force, _ := strconv.ParseBool(q.Get("force"))
-	err := s.b.RestoreVolume(r.Context(), VolumeRestoreRequest{
-		Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name"), R: r.Body})
+	f, err := os.CreateTemp(s.opts.TempDir, "karga-restore-")
 	if err != nil {
-		writeError(w, err)
+		s.writeError(w, err)
+		return
+	}
+	defer func() { _ = f.Close(); _ = os.Remove(f.Name()) }()
+	if _, err := io.Copy(f, r.Body); err != nil {
+		s.writeError(w, fmt.Errorf("receiving the backup: %w", err))
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	err = s.b.RestoreVolume(context.WithoutCancel(r.Context()), VolumeRestoreRequest{
+		Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name")}, f)
+	if err != nil {
+		s.writeError(w, err)
 		return
 	}
 	writeJSON(w, struct{}{})
@@ -281,18 +340,17 @@ func (s *Server) stateBackup(w http.ResponseWriter, r *http.Request) {
 // exec upgrades the connection and carries the command's streams as frames.
 func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 	var req execRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequest)).Decode(&req); err != nil {
-		writeError(w, fmt.Errorf("bad request: %w", err))
+	if !s.decode(w, r, &req) {
 		return
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		writeError(w, errors.New("exec: the connection cannot be upgraded"))
+		s.writeError(w, errors.New("exec: the connection cannot be upgraded"))
 		return
 	}
 	conn, buf, err := hj.Hijack()
 	if err != nil {
-		writeError(w, err)
+		s.writeError(w, err)
 		return
 	}
 	defer func() { _ = conn.Close() }()

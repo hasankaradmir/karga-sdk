@@ -6,15 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/hasankaradmir/karga-sdk/archive"
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/values"
+	"github.com/hasankaradmir/karga-sdk/internal/archive"
+	"github.com/hasankaradmir/karga-sdk/internal/values"
 )
 
 const (
@@ -29,7 +27,7 @@ const (
 )
 
 // Load reads a package from a directory or a .tgz archive.
-func Load(path string) (*pkg.Package, error) {
+func Load(path string) (*Package, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -37,7 +35,7 @@ func Load(path string) (*pkg.Package, error) {
 	var files map[string][]byte
 	switch {
 	case info.IsDir():
-		files, err = readDir(path)
+		files, err = archive.ReadDir(path, archive.DefaultLimits)
 	case strings.HasSuffix(path, ".tgz") || strings.HasSuffix(path, ".tar.gz"):
 		files, err = readArchive(path)
 	default:
@@ -62,45 +60,20 @@ func readArchive(path string) (map[string][]byte, error) {
 	return archive.Unpack(f, archive.DefaultLimits)
 }
 
-// readDir returns every regular file under root keyed by slash-separated relative path.
-func readDir(root string) (map[string][]byte, error) {
-	fsys := os.DirFS(root)
-	files := map[string][]byte{}
-	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			// Symlinks could point outside the package (e.g. files/ -> /etc).
-			return fmt.Errorf("%s: only regular files are allowed in a package", p)
-		}
-		data, err := fs.ReadFile(fsys, p)
-		if err != nil {
-			return err
-		}
-		files[p] = data
-		return nil
-	})
-	return files, err
-}
-
 // fromFiles builds a Package from its files keyed by package-relative path.
-func fromFiles(files map[string][]byte) (*pkg.Package, error) {
+func fromFiles(files map[string][]byte) (*Package, error) {
 	raw, ok := files[metadataFile]
 	if !ok {
 		return nil, fmt.Errorf("%s not found", metadataFile)
 	}
-	var md pkg.Metadata
+	var md Metadata
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&md); err != nil {
 		return nil, fmt.Errorf("%s: %w", metadataFile, err)
 	}
 
-	p := &pkg.Package{
+	p := &Package{
 		Metadata:  md,
 		Values:    map[string]any{},
 		Schema:    files[schemaFile],
@@ -151,6 +124,6 @@ func Digest(path string) (string, error) {
 		return archive.Digest(f)
 	}
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(archive.Pack(path, pw)) }()
+	go func() { pw.CloseWithError(archive.Pack(path, pw, archive.DefaultLimits)) }()
 	return archive.Digest(pr)
 }

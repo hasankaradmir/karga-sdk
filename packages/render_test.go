@@ -2,13 +2,14 @@ package packages
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/pkg"
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
@@ -99,18 +100,18 @@ func TestRenderErrors(t *testing.T) {
 	}
 }
 
-func TestPrintMasksSecrets(t *testing.T) {
+func TestRedactedDocuments(t *testing.T) {
 	m, err := renderDemo(t, Options{Sets: []string{"password=hunter2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var masked, plain bytes.Buffer
-	if err := m.Print(&masked, false); err != nil {
+	docs, err := m.RedactedDocuments()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Print(&plain, true); err != nil {
-		t.Fatal(err)
-	}
+	printDocs(&masked, m.Package.Name, docs)
+	printDocs(&plain, m.Package.Name, m.Documents)
 	if strings.Contains(masked.String(), "hunter2") || !strings.Contains(masked.String(), "password: <redacted>") {
 		t.Fatalf("secret not masked:\n%s", masked.String())
 	}
@@ -162,7 +163,7 @@ func TestRenderOverrides(t *testing.T) {
 }
 
 func TestRenderErrorSaysWhichDocument(t *testing.T) {
-	p := &pkg.Package{Metadata: pkg.Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: pkg.Runtime{Supported: []string{"docker"}}}, Values: map[string]any{},
+	p := &Package{Metadata: Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: Runtime{Supported: []string{"docker"}}}, Values: map[string]any{},
 		Templates: map[string][]byte{"all.yaml": []byte("apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: n}\n---\napiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, bogus: 1}\n")}}
 	_, err := Render(p, Options{ReleaseName: "r"})
 	if err == nil || !strings.Contains(err.Error(), "templates/all.yaml (document 2, from line 5 of the rendered output") || !strings.Contains(err.Error(), "bogus") {
@@ -171,7 +172,7 @@ func TestRenderErrorSaysWhichDocument(t *testing.T) {
 }
 
 func TestNotesRenderedAndRedacted(t *testing.T) {
-	p := &pkg.Package{Metadata: pkg.Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: pkg.Runtime{Supported: []string{"docker"}}},
+	p := &Package{Metadata: Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: Runtime{Supported: []string{"docker"}}},
 		Values:    map[string]any{"password": "s3cret", "port": 8080},
 		Schema:    []byte(`{"type":"object","properties":{"password":{"type":"string","writeOnly":true},"port":{"type":"integer"}}}`),
 		Notes:     []byte("{{ .Release.Name }} on {{ .Values.port }} with {{ .Values.password }}\n"),
@@ -182,5 +183,49 @@ func TestNotesRenderedAndRedacted(t *testing.T) {
 	}
 	if m.Notes != "r on 8080 with <redacted>" {
 		t.Fatalf("notes: %q", m.Notes)
+	}
+}
+
+// printDocs writes documents the way karga template does.
+func printDocs(w io.Writer, pkgName string, docs []Document) {
+	for _, d := range docs {
+		_, _ = fmt.Fprintf(w, "---\n# Source: %s/templates/%s\n%s\n", pkgName, d.Source, d.Content)
+	}
+}
+
+func TestWriteOnlyOnlyInSecrets(t *testing.T) {
+	m := &Manifest{
+		Values:      map[string]any{"db": map[string]any{"password": "hunter22"}, "pin": "1"},
+		SecretPaths: [][]string{{"db", "password"}, {"pin"}},
+		Documents: []Document{
+			{Source: "s.yaml", Content: "values:\n  password: hunter22", Resource: resource.Resource{Kind: resource.KindSecret}},
+			{Source: "w.yaml", Content: "env:\n  REPLICAS: 1", Resource: resource.Resource{Kind: resource.KindWorkload, Metadata: resource.Metadata{Name: "web"}}},
+		},
+	}
+	if err := m.checkWriteOnly(); err != nil {
+		t.Fatalf("a Secret may hold writeOnly values, short values are not looked for: %v", err)
+	}
+	m.Documents[1].Content = "env:\n  DB_PASSWORD: hunter22"
+	if err := m.checkWriteOnly(); err == nil || !strings.Contains(err.Error(), `Workload "web" uses the writeOnly value db.password`) {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+}
+
+func TestRedactWriteOnlyEverywhere(t *testing.T) {
+	m := &Manifest{
+		Values:      map[string]any{"db": map[string]any{"password": "hunter22"}, "keys": map[string]any{"a": "k-one", "b": "k-two"}},
+		SecretPaths: [][]string{{"db", "password"}, {"keys", "*"}},
+		Documents: []Document{{Source: "w.yaml", Content: "env:\n  DB_PASSWORD: hunter22\n  A: k-one\n  B: \"k-two\"\n  USER: app",
+			Resource: resource.Resource{Kind: resource.KindWorkload, Spec: &resource.WorkloadSpec{}}}},
+	}
+	docs, err := m.RedactedDocuments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "env:\n  DB_PASSWORD: <redacted>\n  A: <redacted>\n  B: \"<redacted>\"\n  USER: app"; docs[0].Content != want {
+		t.Fatalf("got:\n%s", docs[0].Content)
+	}
+	if m.Documents[0].Content == docs[0].Content {
+		t.Fatal("RedactedDocuments changed the manifest")
 	}
 }

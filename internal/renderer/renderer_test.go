@@ -123,3 +123,32 @@ func TestRenderDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderLimits(t *testing.T) {
+	cases := map[string]struct{ tpl, want string }{
+		"self tpl":     {`{{ tpl .Values.self . }}`, "nested too deeply"},
+		"self include": {`{{ define "a" }}{{ include "a" . }}{{ end }}{{ include "a" . }}`, "nested too deeply"},
+		"tpl include":  {`{{ define "a" }}{{ tpl "{{ include \"a\" . }}" . }}{{ end }}{{ include "a" . }}`, "nested too deeply"},
+		"until":        {`{{ range until 100000000 }}{{ end }}`, "too large"},
+		"untilStep":    {`{{ range untilStep 0 100000000 1 }}{{ end }}`, "too large"},
+		"seq":          {`{{ seq 100000000 }}`, "too large"},
+		"repeat":       {`{{ repeat 100000000 "x" }}`, "too large"},
+		"indent":       {`{{ indent 100000000 "x" }}`, "too large"},
+		"output":       {`{{ range until 10000 }}{{ $.Values.kb }}{{ end }}`, "output exceeds"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			cx := ctx()
+			cx.Values["self"] = "{{ tpl .Values.self . }}"
+			cx.Values["kb"] = strings.Repeat("x", 4096)
+			_, err := Render(map[string][]byte{"x.yaml": []byte(c.tpl)}, cx)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+	// Normal use stays allowed.
+	if got := renderOne(t, `{{ range until 3 }}{{ . }}{{ end }}{{ repeat 2 "ab" }}{{ indent 2 "x" }}`); got != "012abab  x" {
+		t.Fatalf("got %q", got)
+	}
+}

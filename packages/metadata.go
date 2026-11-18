@@ -1,24 +1,18 @@
-// Package pkg holds the karga package model (Package.yaml and package contents).
-package pkg
+package packages
 
 import (
 	"errors"
 	"fmt"
-	"regexp"
 
 	"github.com/Masterminds/semver/v3"
+
+	"github.com/hasankaradmir/karga-sdk/resource"
 )
 
 // APIVersion is the only Package.yaml apiVersion accepted.
 const APIVersion = "karga.io/v1alpha1"
 
-var (
-	dnsLabel          = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
-	supportedRuntimes = map[string]bool{"docker": true, "podman": true}
-)
-
-// IsDNSLabel reports whether s is a valid lowercase RFC 1123 label.
-func IsDNSLabel(s string) bool { return dnsLabel.MatchString(s) }
+var supportedRuntimes = map[string]bool{"docker": true, "podman": true}
 
 // Metadata is the content of Package.yaml.
 type Metadata struct {
@@ -55,7 +49,7 @@ func (m Metadata) Validate() error {
 	if m.APIVersion != APIVersion {
 		errs = append(errs, fmt.Errorf("apiVersion: must be %q, got %q", APIVersion, m.APIVersion))
 	}
-	if !IsDNSLabel(m.Name) {
+	if !resource.IsDNSLabel(m.Name) {
 		errs = append(errs, fmt.Errorf("name: %q is not a valid DNS label", m.Name))
 	}
 	if _, err := semver.StrictNewVersion(m.Version); err != nil {
@@ -70,7 +64,7 @@ func (m Metadata) Validate() error {
 		}
 	}
 	for i, d := range m.Dependencies {
-		if !IsDNSLabel(d.Name) {
+		if !resource.IsDNSLabel(d.Name) {
 			errs = append(errs, fmt.Errorf("dependencies[%d].name: %q is not a valid DNS label", i, d.Name))
 		}
 		if _, err := semver.NewConstraint(d.Version); err != nil {

@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // WorkloadSpec runs one container. Replicas are intentionally unsupported.
@@ -42,10 +40,6 @@ type WorkloadSpec struct {
 	// StopTimeout is how long the container gets to shut down after SIGTERM before it is killed
 	// (default DefaultStopTimeout). Not written as a default, so adding it to karga recreated nothing.
 	StopTimeout string `json:"stopTimeout,omitempty"`
-	// AnonymousVolumes are the image VOLUME paths the current container keeps in anonymous volumes
-	// (no Volume is mounted there). It is found in the runtime before planning, not written in a
-	// package, and is not part of the spec.
-	AnonymousVolumes []string `json:"-"`
 }
 
 // Update strategies.
@@ -165,13 +159,20 @@ type Resources struct {
 	Pids *int64 `json:"pids,omitempty"`
 }
 
+// DefaultCaps are the Linux capabilities a container has by default (Docker's set). capAdd may name
+// them, typically after capDrop: [ALL]; karga-server refuses other capabilities unless the host
+// administrator allows them.
+var DefaultCaps = []string{"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD",
+	"NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT"}
+
 // Security restricts what the container's processes may do.
 type Security struct {
 	// NoNewPrivileges blocks gaining privileges through setuid binaries (default true).
 	NoNewPrivileges *bool `json:"noNewPrivileges,omitempty"`
 	// ReadOnlyRootFilesystem mounts the image read-only; /tmp stays writable (tmpfs).
 	ReadOnlyRootFilesystem bool `json:"readOnlyRootFilesystem,omitempty"`
-	// CapDrop and CapAdd change Linux capabilities, e.g. [ALL] and [NET_BIND_SERVICE].
+	// CapDrop and CapAdd change Linux capabilities, e.g. [ALL] and [NET_BIND_SERVICE]. capAdd beyond
+	// DefaultCaps needs the host administrator's permission.
 	CapDrop []string `json:"capDrop,omitempty"`
 	CapAdd  []string `json:"capAdd,omitempty"`
 	// User runs the process as "uid[:gid]" or a user of the image instead of its default.
@@ -298,7 +299,7 @@ func (s *WorkloadSpec) validate() error {
 	}
 	names := map[string]bool{}
 	for i, p := range s.Ports {
-		if !pkg.IsDNSLabel(p.Name) {
+		if !IsDNSLabel(p.Name) {
 			errs = append(errs, fmt.Errorf("spec.ports[%d].name: %q must be a DNS label (a Service refers to the port by it)", i, p.Name))
 		}
 		if names[p.Name] {
@@ -327,7 +328,7 @@ func (s *WorkloadSpec) validate() error {
 		}
 	}
 	for i, d := range s.DependsOn {
-		if !pkg.IsDNSLabel(d) {
+		if !IsDNSLabel(d) {
 			errs = append(errs, fmt.Errorf("spec.dependsOn[%d]: %q must name a Service", i, d))
 		}
 		if slices.Contains(s.DependsOn[:i], d) {

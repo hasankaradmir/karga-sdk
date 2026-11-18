@@ -4,15 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"regexp"
+	"sort"
 	"strings"
 
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/renderer"
+	"github.com/hasankaradmir/karga-sdk/internal/renderer"
+	"github.com/hasankaradmir/karga-sdk/internal/values"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga-sdk/values"
 )
 
 // Options controls how a package is rendered.
@@ -42,7 +41,7 @@ type Document struct {
 
 // Manifest is the result of rendering a package.
 type Manifest struct {
-	Package pkg.Metadata
+	Package Metadata
 	// Overrides are the user-supplied values (BaseOverrides, -f, --set, --set-string); Values is the
 	// result of merging them onto the package defaults.
 	Overrides map[string]any
@@ -57,8 +56,8 @@ type Manifest struct {
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
 
 // Render merges values, validates them, renders templates and decodes the resources.
-func Render(p *pkg.Package, opts Options) (*Manifest, error) {
-	if !pkg.IsDNSLabel(opts.ReleaseName) {
+func Render(p *Package, opts Options) (*Manifest, error) {
+	if !resource.IsDNSLabel(opts.ReleaseName) {
 		return nil, fmt.Errorf("release name %q must be a DNS label (lowercase letters, digits and '-')", opts.ReleaseName)
 	}
 	if opts.Revision == 0 {
@@ -99,7 +98,7 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 	var errs []error
 	for _, o := range outs {
 		if o.Path == notesTemplate {
-			m.Notes = redactValues(strings.TrimSpace(o.Content), vals, secretPaths)
+			m.Notes = strings.TrimSpace(o.Content)
 			continue
 		}
 		docs := docSeparator.Split(o.Content, -1)
@@ -132,6 +131,10 @@ func Render(p *pkg.Package, opts Options) (*Manifest, error) {
 	if err := resource.ValidateSet(rs); err != nil {
 		return nil, err
 	}
+	if err := m.checkWriteOnly(); err != nil {
+		return nil, err
+	}
+	m.Notes = m.Redact(m.Notes)
 	return m, nil
 }
 
@@ -146,25 +149,6 @@ func leadingBlank(doc string) int {
 
 // notesTemplate is the name NOTES.txt is rendered under, next to the templates.
 const notesTemplate = "../" + notesFile
-
-// redactValues replaces the values at secret paths that occur in s.
-func redactValues(s string, vals map[string]any, paths [][]string) string {
-	for _, p := range paths {
-		var cur any = vals
-		for _, k := range p {
-			m, ok := cur.(map[string]any)
-			if !ok {
-				cur = nil
-				break
-			}
-			cur = m[k]
-		}
-		if v, ok := cur.(string); ok && v != "" {
-			s = strings.ReplaceAll(s, v, redacted)
-		}
-	}
-	return s
-}
 
 // Overrides stacks the user-supplied values of opts, keeping nulls so they delete defaults later.
 func Overrides(opts Options) (map[string]any, error) {
@@ -206,31 +190,110 @@ func (m *Manifest) Resources() []resource.Resource {
 	return rs
 }
 
-const redacted = "<redacted>"
+// Redacted replaces writeOnly and Secret values wherever karga shows or stores them.
+const Redacted = "<redacted>"
 
-// Print writes the manifest as a multi-document YAML stream.
-// Secret values are replaced with "<redacted>" unless showSecrets is set.
-func (m *Manifest) Print(w io.Writer, showSecrets bool) error {
-	for _, d := range m.Documents {
-		content := d.Content
-		if s, ok := d.Resource.Spec.(*resource.SecretSpec); ok && !showSecrets {
-			masked, err := maskSecret(d.Resource, s)
-			if err != nil {
-				return err
+// Secrets returns every secret value of the manifest: writeOnly values and Secret resource values,
+// longest first so a secret containing another is masked whole.
+func (m *Manifest) Secrets() []string {
+	seen := map[string]bool{}
+	var add func(v any)
+	add = func(v any) {
+		switch t := v.(type) {
+		case string:
+			if t != "" {
+				seen[t] = true
 			}
-			content = masked
-		}
-		if _, err := fmt.Fprintf(w, "---\n# Source: %s/templates/%s\n%s\n", m.Package.Name, d.Source, content); err != nil {
-			return err
+		case map[string]any:
+			for _, c := range t {
+				add(c)
+			}
+		case []any:
+			for _, c := range t {
+				add(c)
+			}
 		}
 	}
-	return nil
+	for _, p := range m.SecretPaths {
+		for _, v := range values.At(m.Values, p) {
+			add(v)
+		}
+	}
+	for _, d := range m.Documents {
+		if s, ok := d.Resource.Spec.(*resource.SecretSpec); ok {
+			for _, v := range s.Values {
+				add(v)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return len(out[i]) > len(out[j]) || len(out[i]) == len(out[j]) && out[i] < out[j] })
+	return out
+}
+
+// minWriteOnlyLen is the length from which a writeOnly value found outside a Secret is refused.
+// shortcut: shorter values are not looked for, so "1" or "on" never trips over unrelated text; a
+// real secret is longer.
+const minWriteOnlyLen = 4
+
+// checkWriteOnly refuses writeOnly values in resources other than Secrets: karga stores and shows
+// the specs of other resources (state, plans, diffs), and protects only Secret values.
+func (m *Manifest) checkWriteOnly() error {
+	var errs []error
+	for _, p := range m.SecretPaths {
+		for _, v := range values.At(m.Values, p) {
+			sv, ok := v.(string)
+			if !ok || len(sv) < minWriteOnlyLen {
+				continue
+			}
+			for _, d := range m.Documents {
+				if d.Resource.Kind == resource.KindSecret || !strings.Contains(d.Content, sv) {
+					continue
+				}
+				errs = append(errs, fmt.Errorf("templates/%s: %s %q uses the writeOnly value %s: put it in a Secret and mount it, or pass it with a *_FILE variable",
+					d.Source, d.Resource.Kind, d.Resource.Metadata.Name, strings.Join(p, ".")))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Redact replaces every secret value that occurs in s with Redacted.
+// shortcut: plain substring match, so a short secret also masks unrelated text that contains it.
+func (m *Manifest) Redact(s string) string {
+	for _, v := range m.Secrets() {
+		s = strings.ReplaceAll(s, v, Redacted)
+	}
+	return s
+}
+
+// RedactedDocuments returns the documents with every secret value replaced by Redacted: Secret
+// resources are re-encoded with masked values, other documents have secret values masked wherever
+// they occur.
+func (m *Manifest) RedactedDocuments() ([]Document, error) {
+	out := make([]Document, len(m.Documents))
+	for i, d := range m.Documents {
+		if s, ok := d.Resource.Spec.(*resource.SecretSpec); ok {
+			masked, err := maskSecret(d.Resource, s)
+			if err != nil {
+				return nil, err
+			}
+			d.Content = masked
+		} else {
+			d.Content = m.Redact(d.Content)
+		}
+		out[i] = d
+	}
+	return out, nil
 }
 
 func maskSecret(r resource.Resource, s *resource.SecretSpec) (string, error) {
 	masked := &resource.SecretSpec{Values: map[string]string{}}
 	for k := range s.Values {
-		masked.Values[k] = redacted
+		masked.Values[k] = Redacted
 	}
 	r.Spec = masked
 	// JSON first so field names follow the json tags, then YAML with sorted keys.

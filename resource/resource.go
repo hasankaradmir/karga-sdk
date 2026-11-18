@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
-
-	"github.com/hasankaradmir/karga-sdk/pkg"
 )
 
 // APIVersion is the only resource apiVersion accepted.
@@ -160,7 +158,7 @@ func ValidateSet(rs []Resource) error {
 	var errs []error
 	seen := map[string]map[string]bool{}
 	for _, r := range rs {
-		if !pkg.IsDNSLabel(r.Metadata.Name) {
+		if !IsDNSLabel(r.Metadata.Name) {
 			errs = append(errs, fmt.Errorf("%s %q: metadata.name must be a DNS label", r.Kind, r.Metadata.Name))
 		}
 		if strings.HasPrefix(r.Metadata.Name, ReservedPrefix) {

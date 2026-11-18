@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -10,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hasankaradmir/karga-sdk/plan"
 )
 
 // slow is a Backend whose installs wait to be released; it records whether the server canceled them.
@@ -22,13 +22,15 @@ type slow struct {
 	canceled chan bool
 }
 
-func (s *slow) Install(ctx context.Context, req InstallRequest) (*Result, error) {
-	req.Progress(plan.Event{Kind: "Workload", Name: "web", Phase: plan.PhaseCreate})
+func (s *slow) Install(ctx context.Context, req InstallRequest, progress func(Event)) (*Result, error) {
+	progress(Event{Kind: "Workload", Name: "web", Phase: PhaseCreate})
 	close(s.started)
 	<-s.finish
 	s.canceled <- ctx.Err() != nil
 	return &Result{Release: req.Name}, nil
 }
+
+func (s *slow) List(context.Context) ([]Release, error) { return nil, nil }
 
 func serve(t *testing.T, b Backend) string {
 	t.Helper()
@@ -42,7 +44,7 @@ func serve(t *testing.T, b Backend) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hs := &http.Server{Handler: NewServer(b, "dev"), ReadHeaderTimeout: time.Second}
+	hs := &http.Server{Handler: NewServer(b, "dev", Options{}), ReadHeaderTimeout: time.Second}
 	go func() { _ = hs.Serve(l) }()
 	t.Cleanup(func() { _ = hs.Close() })
 	return sock
@@ -53,14 +55,16 @@ func TestOperationOutlivesTheClient(t *testing.T) {
 	c := NewClient(serve(t, b))
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
+	shown := make(chan struct{})
 	go func() {
-		_, err := c.Install(ctx, InstallRequest{Name: "shop", Package: "../packages/testdata/demo"})
+		_, err := c.Install(ctx, InstallRequest{Name: "shop", Package: "../packages/testdata/demo"}, func(Event) { close(shown) })
 		errc <- err
 	}()
 	<-b.started
-	cancel() // Ctrl-C in the CLI
+	<-shown
+	cancel() // Ctrl-C in the CLI, once progress shows
 	err := <-errc
-	if err == nil || !strings.Contains(err.Error(), "the operation goes on in karga-server") || !strings.Contains(err.Error(), "karga events -f shop") {
+	if !errors.Is(err, ErrDetached) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("client error: %v", err)
 	}
 	close(b.finish)
@@ -72,7 +76,7 @@ func TestOperationOutlivesTheClient(t *testing.T) {
 func TestAPIVersionContract(t *testing.T) {
 	sock := serve(t, &slow{})
 	v, err := NewClient(sock).Version(context.Background())
-	if err != nil || v.API != Major || v.Version != "dev" {
+	if err != nil || v.API != Version || v.Version != "dev" {
 		t.Fatalf("version: %+v %v", v, err)
 	}
 	post := func(api string) (int, string) {
@@ -93,10 +97,17 @@ func TestAPIVersionContract(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&e)
 		return resp.StatusCode, e.Error
 	}
-	if code, msg := post("2"); code != http.StatusBadRequest || msg != "karga speaks API 2, karga-server API 1: upgrade karga-server" {
+	if code, msg := post("3.0"); code != http.StatusBadRequest || !strings.HasSuffix(msg, "karga speaks API 3.0, karga-server API "+Version+": upgrade karga-server") {
 		t.Fatalf("newer client: %d %q", code, msg)
+	}
+	if code, msg := post("1"); code != http.StatusBadRequest || !strings.HasSuffix(msg, "upgrade karga") {
+		t.Fatalf("older client: %d %q", code, msg)
 	}
 	if code, msg := post(""); code != http.StatusBadRequest || !strings.HasSuffix(msg, "upgrade karga") {
 		t.Fatalf("client without a version: %d %q", code, msg)
+	}
+	// Another minor version of the same major works.
+	if code, msg := post(fmt.Sprintf("%d.%d", Major, Minor+1)); code != http.StatusOK {
+		t.Fatalf("newer minor: %d %q", code, msg)
 	}
 }
