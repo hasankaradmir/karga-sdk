@@ -158,6 +158,10 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Workload\nspec: {image: a, security: {user: \"1000 1000\"}}\n", "security.user"},
 		{head + "kind: Workload\nspec: {image: a, logging: {maxFiles: -1}}\n", "logging.maxFiles"},
 		{head + "kind: Workload\nspec: {image: a, environment: {PORT: 6379}}\n", "environment"},
+		{head + "kind: Workload\nspec: {image: a, environmentFrom: [{name: \"A=B\", secret: s, key: k}]}\n", "invalid variable name"},
+		{head + "kind: Workload\nspec: {image: a, environment: {A: x}, environmentFrom: [{name: A, secret: s, key: k}]}\n", "set twice"},
+		{head + "kind: Workload\nspec: {image: a, environmentFrom: [{name: A, secret: s, key: k}, {name: A, secret: s, key: j}]}\n", "set twice"},
+		{head + "kind: Workload\nspec: {image: a, environmentFrom: [{name: A, secret: s}]}\n", "secret and key are required"},
 		{head + "kind: Config\nspec: {files: {}}\n", "must not be empty"},
 		{head + "kind: Config\nspec: {files: {../x: a}}\n", "not a valid file name"},
 		{head + "kind: Secret\nspec: {}\n", "spec.values must not be empty"},
@@ -207,12 +211,21 @@ func TestValidateSet(t *testing.T) {
 		{"tls secret without key", []Resource{vol, net, withNetwork(w, "n"), withTLS(t, "cert"),
 			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Secret\nmetadata: {name: cert}\nspec: {values: {tls.crt: x}}\n"),
 		}, "needs tls.crt and tls.key"},
+		{"env from missing secret", []Resource{envFrom(t, "db", "password")}, `Secret "db" is not defined`},
+		{"env from missing key", []Resource{envFrom(t, "db", "user"),
+			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Secret\nmetadata: {name: db}\nspec: {values: {password: x}}\n"),
+		}, `Secret "db" has no key "user"`},
 		{"config is not a volume", []Resource{
 			mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Config\nmetadata: {name: redis-data}\nspec: {files: {a: b}}\n"), w,
 		}, `Volume "redis-data" is not defined`},
 	}
 	if err := ValidateSet([]Resource{vol, net, withNetwork(w, "n"), service(t, "s", "redis", 80, "6379", "")}); err != nil {
 		t.Fatalf("target port by number: %v", err)
+	}
+	if err := ValidateSet([]Resource{envFrom(t, "db", "password"),
+		mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Secret\nmetadata: {name: db}\nspec: {values: {password: x}}\n"),
+	}); err != nil {
+		t.Fatalf("env from secret: %v", err)
 	}
 	for _, tt := range tests {
 		if tt.rs == nil {
@@ -233,6 +246,12 @@ func service(t *testing.T, name, workload string, port int, target, listener str
 		doc += fmt.Sprintf(", expose: [{port: p, listener: %s}]", listener)
 	}
 	return mustDecode(t, doc+"}\n")
+}
+
+// envFrom is a Workload setting PASSWORD from key of Secret secret.
+func envFrom(t *testing.T, secret, key string) Resource {
+	t.Helper()
+	return mustDecode(t, fmt.Sprintf("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: app}\nspec: {image: a, environmentFrom: [{name: PASSWORD, secret: %s, key: %s}]}\n", secret, key))
 }
 
 func withTLS(t *testing.T, secret string) Resource {

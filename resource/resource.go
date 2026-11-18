@@ -190,6 +190,16 @@ func ValidateSet(rs []Resource) error {
 				errs = append(errs, fmt.Errorf("%s %q: mount %s: %s %q is not defined", KindWorkload, r.Metadata.Name, m.MountPath, kind, name))
 			}
 		}
+		for _, e := range w.EnvironmentFrom {
+			if e.Secret == "" || e.Key == "" {
+				continue // reported by the workload's own validation
+			}
+			if sec := secretSpec(rs, e.Secret); sec == nil {
+				errs = append(errs, fmt.Errorf("%s %q: environmentFrom %s: Secret %q is not defined", KindWorkload, r.Metadata.Name, e.Name, e.Secret))
+			} else if _, ok := sec.Values[e.Key]; !ok {
+				errs = append(errs, fmt.Errorf("%s %q: environmentFrom %s: Secret %q has no key %q", KindWorkload, r.Metadata.Name, e.Name, e.Secret, e.Key))
+			}
+		}
 		for _, n := range w.Networks {
 			if !seen[KindNetwork][n] {
 				errs = append(errs, fmt.Errorf("%s %q: network %q is not defined", KindWorkload, r.Metadata.Name, n))

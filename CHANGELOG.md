@@ -13,6 +13,11 @@ repository, with its history.
 - The API: types, error kinds, `Backend`, the unix socket client and the HTTP handler; mutating
   requests go on when the client goes away.
 
+### Added
+
+- `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
+  `ValidateSet` checks the Secret and the key exist.
+
 ### Changed
 
 - The SDK holds only the wire contract and the package format. Public packages: `api`,

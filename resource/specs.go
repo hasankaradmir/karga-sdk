@@ -21,7 +21,10 @@ type WorkloadSpec struct {
 	Command     []string          `json:"command,omitempty"`
 	Args        []string          `json:"args,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
-	Ports       []Port            `json:"ports,omitempty"`
+	// EnvironmentFrom sets variables to values of the release's Secrets. karga stores only the
+	// reference; changing the Secret recreates the container.
+	EnvironmentFrom []EnvFrom `json:"environmentFrom,omitempty"`
+	Ports           []Port    `json:"ports,omitempty"`
 	// Networks lists Network resources the workload joins.
 	Networks    []string     `json:"networks,omitempty"`
 	Mounts      []Mount      `json:"mounts,omitempty"`
@@ -40,6 +43,13 @@ type WorkloadSpec struct {
 	// StopTimeout is how long the container gets to shut down after SIGTERM before it is killed
 	// (default DefaultStopTimeout). Not written as a default, so adding it to karga recreated nothing.
 	StopTimeout string `json:"stopTimeout,omitempty"`
+}
+
+// EnvFrom sets variable Name to the value of Key in Secret.
+type EnvFrom struct {
+	Name   string `json:"name"`
+	Secret string `json:"secret"`
+	Key    string `json:"key"`
 }
 
 // Update strategies.
@@ -307,6 +317,20 @@ func (s *WorkloadSpec) validate() error {
 	for k := range s.Environment {
 		if k == "" || strings.Contains(k, "=") {
 			errs = append(errs, fmt.Errorf("spec.environment: invalid variable name %q", k))
+		}
+	}
+	fromNames := map[string]bool{}
+	for i, e := range s.EnvironmentFrom {
+		at := fmt.Sprintf("spec.environmentFrom[%d]", i)
+		switch _, inEnv := s.Environment[e.Name]; {
+		case e.Name == "" || strings.Contains(e.Name, "="):
+			errs = append(errs, fmt.Errorf("%s.name: invalid variable name %q", at, e.Name))
+		case inEnv || fromNames[e.Name]:
+			errs = append(errs, fmt.Errorf("%s.name: %q is set twice", at, e.Name))
+		}
+		fromNames[e.Name] = true
+		if e.Secret == "" || e.Key == "" {
+			errs = append(errs, fmt.Errorf("%s: secret and key are required", at))
 		}
 	}
 	names := map[string]bool{}
