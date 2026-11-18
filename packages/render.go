@@ -42,6 +42,15 @@ type Set struct {
 	String bool   `json:"string,omitempty"`
 }
 
+// Sets makes --set expressions (no --set-string) into Sets, in order.
+func Sets(exprs ...string) []Set {
+	out := make([]Set, len(exprs))
+	for i, e := range exprs {
+		out[i] = Set{Expr: e}
+	}
+	return out
+}
+
 // Document is one rendered resource.
 type Document struct {
 	// Source is the template path relative to templates/.
