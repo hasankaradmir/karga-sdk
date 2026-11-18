@@ -3,11 +3,13 @@ package values
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
 // Any is the path element that matches every key of an object and every index of a list. Secret
-// paths contain it for writeOnly values under additionalProperties, patternProperties and items.
+// paths contain it for writeOnly values under the keywords of maps and lists (additionalProperties,
+// patternProperties, items, contains, …).
 const Any = "*"
 
 // SecretPaths returns the paths of every property the schema marks "writeOnly": true. Such values
@@ -30,59 +32,45 @@ func SecretPaths(schema []byte) ([][]string, error) {
 		}
 		if ref, ok := m["$ref"].(string); ok && !following[ref] {
 			following[ref] = true
-			walk(resolvePointer(root, ref), path)
+			walk(resolveRef(root, ref), path)
 			delete(following, ref)
 		}
 		if w, _ := m["writeOnly"].(bool); w && len(path) > 0 {
 			out = append(out, append([]string(nil), path...))
 			return
 		}
-		if props, ok := m["properties"].(map[string]any); ok {
-			for name, sub := range props {
-				walk(sub, append(path, name))
+		subschemas(m, func(sub any, step string, instance bool) {
+			if !instance {
+				return // a definition counts where it is referenced
 			}
-		}
-		// Keys matched by a pattern or not declared at all: any key (patterns are not evaluated, so
-		// this can mask more than needed, never less).
-		if props, ok := m["patternProperties"].(map[string]any); ok {
-			for _, sub := range props {
-				walk(sub, append(path, Any))
-			}
-		}
-		walk(m["additionalProperties"], append(path, Any))
-		walk(m["items"], append(path, Any))
-		for _, k := range []string{"allOf", "anyOf", "oneOf", "prefixItems"} {
-			if arr, ok := m[k].([]any); ok {
-				for _, sub := range arr {
-					if k == "prefixItems" {
-						walk(sub, append(path, Any))
-					} else {
-						walk(sub, path)
-					}
-				}
-			}
-		}
-		for _, k := range []string{"if", "then", "else", "not"} {
-			walk(m[k], path)
-		}
-		if deps, ok := m["dependentSchemas"].(map[string]any); ok {
-			for _, sub := range deps {
+			if step == "" {
 				walk(sub, path)
+			} else {
+				walk(sub, append(slices.Clip(path), step))
 			}
-		}
+		})
 	}
 	following["#"] = true
 	walk(root, nil)
 	return out, nil
 }
 
-// resolvePointer resolves a local "#/a/b" reference; anything else resolves to nil.
-func resolvePointer(root any, ref string) any {
-	if !strings.HasPrefix(ref, "#") {
+// resolveRef resolves a local reference: a JSON pointer ("#/$defs/a") or an anchor ("#a", a
+// "$anchor" or a draft-7 "$id" of "#a"). Anything else resolves to nil.
+func resolveRef(root any, ref string) any {
+	name, ok := strings.CutPrefix(ref, "#")
+	if !ok {
 		return nil
 	}
+	if name == "" || strings.HasPrefix(name, "/") {
+		return resolvePointer(root, name)
+	}
+	return findAnchor(root, name)
+}
+
+func resolvePointer(root any, pointer string) any {
 	cur := root
-	for part := range strings.SplitSeq(strings.TrimPrefix(strings.TrimPrefix(ref, "#"), "/"), "/") {
+	for part := range strings.SplitSeq(strings.TrimPrefix(pointer, "/"), "/") {
 		if part == "" {
 			continue
 		}
@@ -94,6 +82,28 @@ func resolvePointer(root any, ref string) any {
 		cur = m[part]
 	}
 	return cur
+}
+
+// findAnchor returns the schema object that declares anchor name.
+func findAnchor(node any, name string) any {
+	switch t := node.(type) {
+	case map[string]any:
+		if t["$anchor"] == name || t["$id"] == "#"+name {
+			return t
+		}
+		for _, c := range t {
+			if found := findAnchor(c, name); found != nil {
+				return found
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if found := findAnchor(c, name); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // At returns the values of v at path; Any matches every key or index.
@@ -119,4 +129,40 @@ func At(v any, path []string) []any {
 		}
 	}
 	return out
+}
+
+// Mask returns a deep copy of v with every non-nil value at paths replaced by with; Any matches
+// every key of a map and every element of a list, as in SecretPaths.
+func Mask(v any, paths [][]string, with any) any {
+	out := deepCopy(v)
+	for _, p := range paths {
+		out = maskAt(out, p, with)
+	}
+	return out
+}
+
+func maskAt(v any, path []string, with any) any {
+	if len(path) == 0 {
+		if v == nil {
+			return nil
+		}
+		return with
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		if path[0] == Any {
+			for k, c := range t {
+				t[k] = maskAt(c, path[1:], with)
+			}
+		} else if c, ok := t[path[0]]; ok {
+			t[path[0]] = maskAt(c, path[1:], with)
+		}
+	case []any:
+		if path[0] == Any {
+			for i, c := range t {
+				t[i] = maskAt(c, path[1:], with)
+			}
+		}
+	}
+	return v
 }

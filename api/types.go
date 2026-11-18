@@ -41,14 +41,19 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return err
 }
 
+// Set is a --set expression, or a --set-string one when String.
+type Set struct {
+	Expr   string `json:"expr"`
+	String bool   `json:"string,omitempty"`
+}
+
 // ValuesInput are the values a user gives an install or upgrade, applied in this order onto the
 // package defaults.
 type ValuesInput struct {
 	// Files are the contents of values files (-f).
 	Files [][]byte `json:"files,omitempty"`
-	// Set and SetString are --set and --set-string expressions such as a.b=1.
-	Set       []string `json:"set,omitempty"`
-	SetString []string `json:"setString,omitempty"`
+	// Sets are --set and --set-string expressions such as a.b=1, in the order they were given.
+	Sets []Set `json:"sets,omitempty"`
 	// Strict rejects values the schema does not declare.
 	Strict bool `json:"strict,omitempty"`
 }
@@ -119,7 +124,7 @@ type LogsRequest struct {
 	Proxy     bool     `json:"proxy,omitempty"`
 	Gateway   bool     `json:"gateway,omitempty"`
 	// Tail is the number of lines per container from the end (negative: all).
-	Tail   int  `json:"tail"`
+	Tail   int  `json:"tail,omitempty"`
 	Follow bool `json:"follow,omitempty"`
 }
 
@@ -157,6 +162,48 @@ type ResourceStatus struct {
 	// Restarts counts restarts by the runtime; OOMKilled says the last run hit the memory limit.
 	Restarts  int  `json:"restarts,omitempty"`
 	OOMKilled bool `json:"oomKilled,omitempty"`
+}
+
+// What ResourceStatus says. Desired is what the state records; Actual what the runtime has (a
+// container's state for workloads and proxies); Health a workload's health check.
+const (
+	DesiredApplied = "applied"
+	DesiredFailed  = "failed" // the resource's last apply failed
+
+	ActualCreated   = "created"
+	ActualRunning   = "running"
+	ActualExited    = "exited"
+	ActualMissing   = "missing"
+	ActualPresent   = "present"    // a Network or Volume exists
+	ActualRouted    = "routed"     // a Service's ports go to a backend
+	ActualNotRouted = "not routed" // a Service's ports go nowhere yet
+	ActualFile      = "file"       // a Config or Secret, kept as files
+
+	HealthNone      = "none" // no health check
+	HealthStarting  = "starting"
+	HealthHealthy   = "healthy"
+	HealthUnhealthy = "unhealthy"
+)
+
+// Healthy reports whether the resource is applied and runs well: present, not exited, and not
+// failing or still waiting for its health check.
+func (s ResourceStatus) Healthy() bool {
+	return s.Desired == DesiredApplied && s.Actual != ActualMissing && s.Actual != ActualExited &&
+		s.Health != HealthUnhealthy && s.Health != HealthStarting
+}
+
+// Healthy reports whether the release is deployed, no operation on it was interrupted, and every
+// resource is healthy. karga status exits 6 when it is not.
+func (r *StatusReport) Healthy() bool {
+	if r.Release.Status != StatusDeployed || r.Interrupted != "" {
+		return false
+	}
+	for _, x := range r.Resources {
+		if !x.Healthy() {
+			return false
+		}
+	}
+	return true
 }
 
 // StatusReport is the desired vs actual state of a release.

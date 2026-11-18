@@ -22,15 +22,19 @@ const (
 	maxOutput = 16 << 20
 	// maxItems caps the lists until, untilStep and seq may build.
 	maxItems = 10000
-	// renderTimeout bounds one Render; checked whenever output is written or a template is entered.
+	// maxIterations caps the iterations of every range of one Render together.
+	maxIterations = 1_000_000
+	// renderTimeout bounds one Render; checked whenever output is written, a template is entered or
+	// a range iterates.
 	renderTimeout = 10 * time.Second
 )
 
 // budget is shared by everything one Render executes.
 type budget struct {
-	depth    int
-	written  int
-	deadline time.Time
+	depth      int
+	written    int
+	iterations int
+	deadline   time.Time
 }
 
 func (b *budget) check() error {
@@ -101,6 +105,7 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 			return nil, err
 		}
 	}
+	instrument(root)
 
 	var out []Output
 	for _, n := range names {
@@ -117,27 +122,27 @@ func Render(templates map[string][]byte, ctx Context) ([]Output, error) {
 }
 
 // clean drops the "<no value>" text/template prints for missing map keys, so optional values render empty.
+// shortcut: the same text written in a template is dropped too (as in Helm); a template can print it
+// with {{ "<no" }} value>.
 func clean(s string) string { return strings.ReplaceAll(s, "<no value>", "") }
 
-// denied lists sprig functions that read the host or are non-deterministic.
-var denied = map[string]string{
-	"env": "reads the host environment", "expandenv": "reads the host environment",
-	"getHostByName": "performs network lookups",
-}
-
-var nonDeterministic = []string{
-	"now", "date", "dateInZone", "date_in_zone", "dateModify", "date_modify", "mustDateModify",
-	"ago", "htmlDate", "htmlDateInZone", "unixEpoch",
-	"randAlpha", "randAlphaNum", "randAscii", "randNumeric", "randBytes", "randInt", "uuidv4", "shuffle",
-	"genPrivateKey", "genCA", "genCAWithKey", "genSelfSignedCert", "genSelfSignedCertWithKey",
-	"genSignedCert", "genSignedCertWithKey", "encryptAES", "bcrypt", "htpasswd",
-}
-
-func init() {
-	for _, n := range nonDeterministic {
-		denied[n] = "non-deterministic"
+// denied lists sprig functions that read the host or are non-deterministic, with the reason.
+var denied = func() map[string]string {
+	d := map[string]string{
+		"env": "reads the host environment", "expandenv": "reads the host environment",
+		"getHostByName": "performs network lookups",
 	}
-}
+	for _, n := range []string{
+		"now", "date", "dateInZone", "date_in_zone", "dateModify", "date_modify", "mustDateModify",
+		"ago", "htmlDate", "htmlDateInZone", "unixEpoch",
+		"randAlpha", "randAlphaNum", "randAscii", "randNumeric", "randBytes", "randInt", "uuidv4", "shuffle",
+		"genPrivateKey", "genCA", "genCAWithKey", "genSelfSignedCert", "genSelfSignedCertWithKey",
+		"genSignedCert", "genSignedCertWithKey", "encryptAES", "bcrypt", "htpasswd",
+	} {
+		d[n] = "non-deterministic"
+	}
+	return d
+}()
 
 func funcMap(root *template.Template, b *budget) template.FuncMap {
 	fm := sprig.TxtFuncMap()
@@ -147,7 +152,10 @@ func funcMap(root *template.Template, b *budget) template.FuncMap {
 	// sprig's keys/values follow map iteration order; sort them so output is deterministic.
 	fm["keys"] = sortedKeys
 	fm["values"] = sortedValues
-	limitSizes(fm)
+	for name, fn := range sizeFuncs {
+		fm[name] = fn
+	}
+	fm[tickFunc] = b.tick
 
 	// nest runs fn one level deeper; include and tpl share the depth so they cannot recurse through each other.
 	nest := func(what string, fn func(*limitedBuffer) error) (string, error) {
@@ -179,6 +187,7 @@ func funcMap(root *template.Template, b *budget) template.FuncMap {
 			if t, err = t.New("\x00tpl").Parse(text); err != nil {
 				return fmt.Errorf("tpl: %w", err)
 			}
+			instrument(t)
 			if err := t.Execute(buf, data); err != nil {
 				return fmt.Errorf("tpl: %w", err)
 			}
@@ -249,71 +258,4 @@ func sortedValues(dict map[string]any) []any {
 		vs[i] = dict[k]
 	}
 	return vs
-}
-
-// limitSizes wraps the sprig functions whose result size an argument controls.
-func limitSizes(fm template.FuncMap) {
-	tooLarge := func(name string, n int) error {
-		return fmt.Errorf("%s: result too large (%d)", name, n)
-	}
-	until := fm["until"].(func(int) []int)
-	fm["until"] = func(n int) ([]int, error) {
-		if abs(n) > maxItems {
-			return nil, tooLarge("until", n)
-		}
-		return until(n), nil
-	}
-	untilStep := fm["untilStep"].(func(int, int, int) []int)
-	fm["untilStep"] = func(start, stop, step int) ([]int, error) {
-		if step != 0 && (stop-start)/step > maxItems {
-			return nil, tooLarge("untilStep", (stop-start)/step)
-		}
-		return untilStep(start, stop, step), nil
-	}
-	seq := fm["seq"].(func(...int) string)
-	fm["seq"] = func(p ...int) (string, error) {
-		if n := seqLen(p); n > maxItems {
-			return "", tooLarge("seq", n)
-		}
-		return seq(p...), nil
-	}
-	repeat := fm["repeat"].(func(int, string) string)
-	fm["repeat"] = func(n int, s string) (string, error) {
-		if n > 0 && n*max(len(s), 1) > maxOutput {
-			return "", tooLarge("repeat", n)
-		}
-		return repeat(n, s), nil
-	}
-	for _, name := range []string{"indent", "nindent"} {
-		indent := fm[name].(func(int, string) string)
-		fm[name] = func(n int, s string) (string, error) {
-			if n > 0 && n*(strings.Count(s, "\n")+1) > maxOutput {
-				return "", tooLarge(name, n)
-			}
-			return indent(n, s), nil
-		}
-	}
-}
-
-// seqLen is how many numbers seq prints for its 1 to 3 arguments (end; start end; start step end).
-func seqLen(p []int) int {
-	switch len(p) {
-	case 1:
-		return abs(p[0])
-	case 2:
-		return abs(p[1]-p[0]) + 1
-	case 3:
-		if p[1] == 0 {
-			return 0
-		}
-		return abs((p[2]-p[0])/p[1]) + 1
-	}
-	return 0
-}
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
 }

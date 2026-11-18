@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,16 +20,35 @@ type Options struct {
 	ReleaseName string
 	// Revision defaults to 1.
 	Revision int
-	// BaseOverrides are applied before ValueFiles (e.g. values reused from the previous revision).
-	BaseOverrides map[string]any
-	// ValueFiles are applied in order, then ValueData (values files a client read and sent), then
-	// Sets, then SetStrings.
-	ValueFiles []string
-	ValueData  [][]byte
-	Sets       []string
-	SetStrings []string
+	Values   ValueSources
 	// Strict rejects values the schema does not declare.
 	Strict bool
+}
+
+// ValueSources are the values a user gives a package, applied in this order onto its defaults.
+type ValueSources struct {
+	// Base is applied first (e.g. values reused from the previous revision).
+	Base map[string]any
+	// Files are values files read here, then Data values files a client read and sent.
+	Files []string
+	Data  [][]byte
+	// Sets are --set and --set-string expressions, in the order they were given.
+	Sets []Set
+}
+
+// Set is a --set expression ("a.b=1,c[0]=x"), or a --set-string one when String.
+type Set struct {
+	Expr   string `json:"expr"`
+	String bool   `json:"string,omitempty"`
+}
+
+// Sets makes --set expressions (no --set-string) into Sets, in order.
+func Sets(exprs ...string) []Set {
+	out := make([]Set, len(exprs))
+	for i, e := range exprs {
+		out[i] = Set{Expr: e}
+	}
+	return out
 }
 
 // Document is one rendered resource.
@@ -57,8 +77,8 @@ var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
 
 // Render merges values, validates them, renders templates and decodes the resources.
 func Render(p *Package, opts Options) (*Manifest, error) {
-	if !resource.IsDNSLabel(opts.ReleaseName) {
-		return nil, fmt.Errorf("release name %q must be a DNS label (lowercase letters, digits and '-')", opts.ReleaseName)
+	if err := resource.ValidateReleaseName(opts.ReleaseName); err != nil {
+		return nil, err
 	}
 	if opts.Revision == 0 {
 		opts.Revision = 1
@@ -66,7 +86,7 @@ func Render(p *Package, opts Options) (*Manifest, error) {
 	if err := p.Metadata.Validate(); err != nil {
 		return nil, prefixed(metadataFile, err)
 	}
-	overrides, err := Overrides(opts)
+	overrides, err := Overrides(opts.Values, p.Values)
 	if err != nil {
 		return nil, err
 	}
@@ -150,36 +170,36 @@ func leadingBlank(doc string) int {
 // notesTemplate is the name NOTES.txt is rendered under, next to the templates.
 const notesTemplate = "../" + notesFile
 
-// Overrides stacks the user-supplied values of opts, keeping nulls so they delete defaults later.
-func Overrides(opts Options) (map[string]any, error) {
-	vals := values.Overlay(nil, opts.BaseOverrides)
-	for _, f := range opts.ValueFiles {
+// Overrides stacks the user-supplied values v, keeping nulls so they delete defaults later. A set
+// that indexes a list edits the list it overrides, from defaults or v's files (a[1]=x keeps a[0]).
+func Overrides(v ValueSources, defaults map[string]any) (map[string]any, error) {
+	vals := values.Overlay(nil, v.Base)
+	for _, f := range v.Files {
 		fv, err := values.LoadFile(f)
 		if err != nil {
 			return nil, err
 		}
 		vals = values.Overlay(vals, fv)
 	}
-	for i, data := range opts.ValueData {
+	for i, data := range v.Data {
 		fv, err := values.Decode(data)
 		if err != nil {
 			return nil, fmt.Errorf("values file %d: %w", i+1, err)
 		}
 		vals = values.Overlay(vals, fv)
 	}
+	seed := values.Merge(defaults, vals)
 	sets := map[string]any{}
-	for _, s := range opts.Sets {
-		if err := values.ApplySet(sets, s, false); err != nil {
-			return nil, err
-		}
-	}
-	for _, s := range opts.SetStrings {
-		if err := values.ApplySet(sets, s, true); err != nil {
+	for _, s := range v.Sets {
+		if err := (values.Set{Expr: s.Expr, String: s.String}).Apply(sets, seed); err != nil {
 			return nil, err
 		}
 	}
 	return values.Overlay(vals, sets), nil
 }
+
+// Warnings lists what the manifest does that is allowed but worth knowing (resource.Warnings).
+func (m *Manifest) Warnings() []string { return resource.Warnings(m.Resources()) }
 
 // Resources returns the decoded resources of the manifest in document order.
 func (m *Manifest) Resources() []resource.Resource {
@@ -192,6 +212,13 @@ func (m *Manifest) Resources() []resource.Resource {
 
 // Redacted replaces writeOnly and Secret values wherever karga shows or stores them.
 const Redacted = "<redacted>"
+
+// MaskValues returns a copy of vals with every value at paths (Manifest.SecretPaths, which may hold
+// values.Any for every key or element) replaced by Redacted, for storing or showing them.
+func MaskValues(vals map[string]any, paths [][]string) map[string]any {
+	out, _ := values.Mask(vals, paths, Redacted).(map[string]any)
+	return out
+}
 
 // Secrets returns every secret value of the manifest: writeOnly values and Secret resource values,
 // longest first so a secret containing another is masked whole.
@@ -226,6 +253,12 @@ func (m *Manifest) Secrets() []string {
 			}
 		}
 	}
+	// A template may pass a secret through b64enc (a Kubernetes habit); its encoding is as secret.
+	for v := range maps.Clone(seen) {
+		if len(v) >= minWriteOnlyLen {
+			seen[base64.StdEncoding.EncodeToString([]byte(v))] = true
+		}
+	}
 	out := make([]string, 0, len(seen))
 	for v := range seen {
 		out = append(out, v)
@@ -249,8 +282,9 @@ func (m *Manifest) checkWriteOnly() error {
 			if !ok || len(sv) < minWriteOnlyLen {
 				continue
 			}
+			encoded := base64.StdEncoding.EncodeToString([]byte(sv))
 			for _, d := range m.Documents {
-				if d.Resource.Kind == resource.KindSecret || !strings.Contains(d.Content, sv) {
+				if d.Resource.Kind == resource.KindSecret || !strings.Contains(d.Content, sv) && !strings.Contains(d.Content, encoded) {
 					continue
 				}
 				errs = append(errs, fmt.Errorf("templates/%s: %s %q uses the writeOnly value %s: put it in a Secret and mount it, or pass it with a *_FILE variable",
@@ -263,11 +297,17 @@ func (m *Manifest) checkWriteOnly() error {
 
 // Redact replaces every secret value that occurs in s with Redacted.
 // shortcut: plain substring match, so a short secret also masks unrelated text that contains it.
-func (m *Manifest) Redact(s string) string {
-	for _, v := range m.Secrets() {
-		s = strings.ReplaceAll(s, v, Redacted)
+func (m *Manifest) Redact(s string) string { return m.redactor().Replace(s) }
+
+// redactor replaces every secret value with Redacted, longest first (Secrets' order) so a secret
+// containing another is masked whole.
+func (m *Manifest) redactor() *strings.Replacer {
+	secrets := m.Secrets()
+	pairs := make([]string, 0, 2*len(secrets))
+	for _, v := range secrets {
+		pairs = append(pairs, v, Redacted)
 	}
-	return s
+	return strings.NewReplacer(pairs...)
 }
 
 // RedactedDocuments returns the documents with every secret value replaced by Redacted: Secret
@@ -275,6 +315,7 @@ func (m *Manifest) Redact(s string) string {
 // they occur.
 func (m *Manifest) RedactedDocuments() ([]Document, error) {
 	out := make([]Document, len(m.Documents))
+	r := m.redactor()
 	for i, d := range m.Documents {
 		if s, ok := d.Resource.Spec.(*resource.SecretSpec); ok {
 			masked, err := maskSecret(d.Resource, s)
@@ -283,7 +324,7 @@ func (m *Manifest) RedactedDocuments() ([]Document, error) {
 			}
 			d.Content = masked
 		} else {
-			d.Content = m.Redact(d.Content)
+			d.Content = r.Replace(d.Content)
 		}
 		out[i] = d
 	}

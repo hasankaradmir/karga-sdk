@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -41,6 +43,16 @@ func ReadDir(dir string, lim Limits) (map[string][]byte, error) {
 		return nil
 	})
 	return files, err
+}
+
+// readAtMost reads the file name of fsys, at most n+1 bytes (one more than allowed shows it is too large).
+func readAtMost(fsys fs.FS, name string, n int64) ([]byte, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }() // read-only
+	return io.ReadAll(io.LimitReader(f, max(n, 0)+1))
 }
 
 // Pack writes dir as a gzip-compressed tar with entries under "<base name of dir>/".
@@ -119,12 +131,13 @@ func walk(dir string, lim Limits, fn func(rel string, info fs.FileInfo, data []b
 		if count++; count > lim.MaxFiles {
 			return fmt.Errorf("package has more than %d files; list unneeded ones in %s", lim.MaxFiles, IgnoreFile)
 		}
-		if total += info.Size(); total > lim.MaxBytes {
-			return fmt.Errorf("package is larger than %d bytes; list unneeded files in %s", lim.MaxBytes, IgnoreFile)
-		}
-		data, err := fs.ReadFile(fsys, p)
+		// The limit counts what is read: a file growing after Info cannot get past it.
+		data, err := readAtMost(fsys, p, lim.MaxBytes-total)
 		if err != nil {
 			return err
+		}
+		if total += int64(len(data)); total > lim.MaxBytes {
+			return fmt.Errorf("package is larger than %d bytes; list unneeded files in %s", lim.MaxBytes, IgnoreFile)
 		}
 		return fn(p, info, data)
 	})
@@ -240,11 +253,15 @@ func Unpack(r io.Reader, lim Limits) (map[string][]byte, error) {
 	return files, nil
 }
 
-// Digest returns "sha256:<hex>" of everything read from r.
-func Digest(r io.Reader) (string, error) {
+// ContentDigest returns "sha256:<hex>" of the files of a package: their paths and contents, in
+// path order. It does not depend on how the files were read (a directory, an archive however it
+// was compressed), so the same package always has the same digest.
+func ContentDigest(files map[string][]byte) string {
 	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		// Each length is written before what it measures, so no two packages hash the same bytes.
+		_, _ = fmt.Fprintf(h, "%d:%s%d:", len(p), p, len(files[p]))
+		_, _ = h.Write(files[p])
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }

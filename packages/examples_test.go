@@ -17,7 +17,7 @@ var examples = []struct {
 	opts          Options
 }{
 	{"redis", "my-redis", Options{}},
-	{"postgres", "my-db", Options{Sets: []string{"database.password=s3cret"}}},
+	{"postgres", "my-db", Options{Values: ValueSources{Sets: []Set{{Expr: "database.password=s3cret"}}}}},
 }
 
 func examplePath(name string) string { return filepath.Join("..", "examples", name) }
@@ -74,11 +74,11 @@ func TestExamplesGolden(t *testing.T) {
 
 func TestExamplesLint(t *testing.T) {
 	for _, ex := range examples {
-		if issues := Lint(examplePath(ex.name), ex.opts); issues != nil {
+		if issues, _ := Lint(examplePath(ex.name), ex.opts); issues != nil {
 			t.Errorf("%s: %v", ex.name, issues)
 		}
 	}
-	if issues := Lint(examplePath("postgres"), Options{}); len(issues) != 1 {
+	if issues, _ := Lint(examplePath("postgres"), Options{}); len(issues) != 1 {
 		t.Errorf("postgres without password: want 1 issue, got %v", issues)
 	}
 }
@@ -92,10 +92,8 @@ func TestExamplesPackReproducible(t *testing.T) {
 		if err := archive.Pack(examplePath(ex.name), &b, archive.DefaultLimits); err != nil {
 			t.Fatal(err)
 		}
-		da, _ := archive.Digest(&a)
-		db, _ := archive.Digest(&b)
-		if da != db {
-			t.Errorf("%s: digest changed between packs: %s vs %s", ex.name, da, db)
+		if !bytes.Equal(a.Bytes(), b.Bytes()) {
+			t.Errorf("%s: the archive changed between packs", ex.name)
 		}
 	}
 }

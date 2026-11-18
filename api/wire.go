@@ -35,6 +35,8 @@ const (
 	RevisionPending  = "pending"
 	RevisionDeployed = "deployed"
 	RevisionFailed   = "failed"
+	// RevisionSuperseded is a deployed revision a later deployment replaced.
+	RevisionSuperseded = "superseded"
 )
 
 // Revision is one immutable desired configuration of a release.

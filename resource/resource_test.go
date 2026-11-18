@@ -343,3 +343,61 @@ func TestDecodeRejects(t *testing.T) {
 		t.Fatal("DefaultCaps can be changed by its callers")
 	}
 }
+
+func TestValidateReleaseName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"shop": true, "a": true, "web-1": true, strings.Repeat("a", 63): true,
+		"": false, "Shop": false, "../x": false, "a/b": false, "-a": false, strings.Repeat("a", 64): false,
+		"karga": false, "karga-gateway": false, "kargo": true,
+	} {
+		if err := ValidateReleaseName(name); (err == nil) != ok {
+			t.Errorf("ValidateReleaseName(%q) = %v", name, err)
+		}
+	}
+}
+
+func TestWarnings(t *testing.T) {
+	w := mustDecode(t, `
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: api}
+spec:
+  image: postgrest/postgrest:v12
+  environmentFrom:
+    - {name: PGRST_DB_URI, secret: db, key: uri}
+`)
+	got := Warnings([]Resource{w, mustDecode(t, workloadDoc)})
+	if len(got) != 1 || !strings.Contains(got[0], `"api" sets PGRST_DB_URI from Secret "db"`) || !strings.Contains(got[0], "docker inspect") {
+		t.Fatalf("warnings: %q", got)
+	}
+}
+
+func TestDriversAndNames(t *testing.T) {
+	head := "apiVersion: karga.io/v1alpha1\nmetadata: {name: x}\n"
+	for doc, want := range map[string]string{
+		head + "kind: Network\nspec: {driver: macvlan}\n":                                `"macvlan" is not supported`,
+		head + "kind: Network\nspec: {driver: host}\n":                                   `"host" is not supported`,
+		head + "kind: Volume\nspec: {driver: nfs}\n":                                     `"nfs" is not supported`,
+		head + "kind: Workload\nspec: {image: redis, environment: {\"A\\u0000B\": x}}\n": "invalid variable name",
+		head + "kind: Config\nspec: {files: {\"a\\nb\": x}}\n":                           "not a valid file name",
+		head + "kind: Secret\nspec: {values: {" + strings.Repeat("a", 256) + ": x}}\n":   "not a valid file name",
+	} {
+		if _, err := Decode([]byte(doc)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %q", doc, err, want)
+		}
+	}
+	for _, doc := range []string{head + "kind: Network\nspec: {}\n", head + "kind: Volume\nspec: {driver: local}\n"} {
+		if _, err := Decode([]byte(doc)); err != nil {
+			t.Errorf("%q: %v", doc, err)
+		}
+	}
+}
+
+func TestQuantityLimits(t *testing.T) {
+	if _, err := ParseMemory("8388608Ti"); err == nil { // 2^63 bytes: one more than int64 holds
+		t.Fatal("2^63 bytes accepted")
+	}
+	if n, err := ParseMemory("8388607Ti"); err != nil || n != 8388607<<40 {
+		t.Fatalf("8388607Ti: %d %v", n, err)
+	}
+}

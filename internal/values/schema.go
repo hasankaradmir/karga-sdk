@@ -60,12 +60,63 @@ func Validate(schema []byte, vals map[string]any, strict bool) error {
 	return nil
 }
 
-// Keywords whose value is a single subschema, a map of subschemas, or a list of subschemas.
-var (
-	schemaKeys    = []string{"items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames", "unevaluatedProperties", "additionalItems", "unevaluatedItems"}
-	schemaMapKeys = []string{"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
-	schemaArrKeys = []string{"allOf", "anyOf", "oneOf", "prefixItems"}
-)
+// subschemas calls fn with every subschema of the schema object m. step is the instance the
+// subschema applies to, relative to m's: "" the same instance, Any every key or element, or a
+// property name. instance is false for subschemas that apply to no instance by themselves
+// (definitions, property names). Both walks of a schema use it, so they see the same keywords.
+func subschemas(m map[string]any, fn func(sub any, step string, instance bool)) {
+	if props, ok := m["properties"].(map[string]any); ok {
+		for name, sub := range props {
+			fn(sub, name, true)
+		}
+	}
+	for _, k := range []string{"patternProperties"} {
+		if subs, ok := m[k].(map[string]any); ok {
+			for _, sub := range subs {
+				fn(sub, Any, true) // patterns are not evaluated: this may mask more than needed, never less
+			}
+		}
+	}
+	for _, k := range []string{"additionalProperties", "unevaluatedProperties", "additionalItems", "unevaluatedItems", "contains"} {
+		fn(m[k], Any, true)
+	}
+	// items is a schema, or a list of them (draft 4 to 2019-09); prefixItems is a list.
+	for _, k := range []string{"items", "prefixItems"} {
+		if arr, ok := m[k].([]any); ok {
+			for _, sub := range arr {
+				fn(sub, Any, true)
+			}
+		} else {
+			fn(m[k], Any, true)
+		}
+	}
+	for _, k := range []string{"allOf", "anyOf", "oneOf"} {
+		if arr, ok := m[k].([]any); ok {
+			for _, sub := range arr {
+				fn(sub, "", true)
+			}
+		}
+	}
+	for _, k := range []string{"if", "then", "else", "not"} {
+		fn(m[k], "", true)
+	}
+	// dependencies (draft 7) maps a property to a schema or to a list of names.
+	for _, k := range []string{"dependentSchemas", "dependencies"} {
+		if subs, ok := m[k].(map[string]any); ok {
+			for _, sub := range subs {
+				fn(sub, "", true)
+			}
+		}
+	}
+	for _, k := range []string{"$defs", "definitions"} {
+		if subs, ok := m[k].(map[string]any); ok {
+			for _, sub := range subs {
+				fn(sub, "", false)
+			}
+		}
+	}
+	fn(m["propertyNames"], "", false)
+}
 
 // closeObjects walks schema keywords (not arbitrary keys, so a property named "properties" is safe).
 // shortcut: like any additionalProperties-based strict mode, it rejects valid input split across allOf branches.
@@ -79,26 +130,5 @@ func closeObjects(node any) {
 			m["additionalProperties"] = false
 		}
 	}
-	for _, k := range schemaKeys {
-		closeObjects(m[k])
-	}
-	for _, k := range schemaMapKeys {
-		if sub, ok := m[k].(map[string]any); ok {
-			for _, s := range sub {
-				closeObjects(s)
-			}
-		}
-	}
-	for _, k := range schemaArrKeys {
-		if arr, ok := m[k].([]any); ok {
-			for _, s := range arr {
-				closeObjects(s)
-			}
-		}
-	}
-	if arr, ok := m["items"].([]any); ok {
-		for _, s := range arr {
-			closeObjects(s)
-		}
-	}
+	subschemas(m, func(sub any, _ string, _ bool) { closeObjects(sub) })
 }

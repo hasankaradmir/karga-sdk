@@ -7,6 +7,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- `packages.MaskValues` masks the values at secret paths, `*` (every key or element) included,
+  for code that stores or shows values.
+- `resource.Warnings`, `Manifest.Warnings`: what a package does that is allowed but worth knowing.
+  A variable taken from a Secret (`environmentFrom`) is visible to anyone who can inspect the
+  container. `packages.Lint` returns these warnings besides the problems.
+
 - `environmentFrom` on a Workload sets variables from Secret values (`{name, secret, key}`);
   `ValidateSet` checks the Secret and the key exist.
 - `api/apitest`: `Serve` runs an `api.Backend` behind the real HTTP handler on a unix socket, for
@@ -14,7 +20,69 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Changed
 
+- API 3.0 (a new major version: clients and servers of API 2 do not work together).
+  - Every endpoint takes its own request type with a `Validate` method, and the server checks it
+    before the backend sees it: `ReleaseRequest`, `RevisionRequest`, `ValuesRequest`,
+    `DiffRequest`, `ReconcileRequest`, `EventsRequest`, `ExecRequest` and the gateway requests.
+    A request no longer accepts the fields of other endpoints.
+  - `Backend` is the sum of `Deployer`, `Reader`, `Streamer`, `Reconciler` and `GatewayAdmin`;
+    `Remote` adds `Version` and is what `Client` implements.
+  - Renamed: `GetValues`, `GetNotes`, `GetManifest` and `Gateway` are `Values`, `Notes`,
+    `Manifest` and `GatewayRoutes`. `Pause(name, paused)` is `Pause` and `Resume`.
+  - Routes: `/v1/deploy` is `/v1/install`, `/v1/upgrade` and `/v1/rollback`; `/v1/gateway/change`
+    is `/v1/gateway/access-log`, `/v1/gateway/listen`, `/v1/gateway/listeners/add` and
+    `/v1/gateway/listeners/remove`.
+  - `ErrNotRunning`, `ErrDetached` and `ErrDisconnected` are declared with the other errors.
+- Values: `packages.Options` holds the user's values in `Values` (`ValueSources`: `Base`, `Files`,
+  `Data`, `Sets`), and `--set`/`--set-string` are one ordered list (`[]Set`, `String` for
+  `--set-string`), as `api.ValuesInput.Sets` is: they apply in the order given, the last one wins.
+  An index into a list edits the list it overrides (`hosts[1]=x` keeps `hosts[0]` from the
+  defaults or the files); a list given whole still replaces the default one. `Overrides` takes the
+  package defaults; `values.ApplySet` is `values.Set.Apply`.
+- `resource.Resource.Spec` has the exported type `resource.Spec` (with `Kind()`), which only the
+  package implements. `WorkloadSpec.PortNamed` is `TargetPort`: it also matches a port number,
+  unlike `ServiceSpec.PortNamed`.
+  - The words of a status report are constants (`DesiredApplied`, `ActualMissing`,
+    `HealthStarting`, …, and `RevisionSuperseded`), and `StatusReport.Healthy` is the rule `karga
+    status` exits 6 by. `ValidateStrategy` checks a `--strategy`; upgrade and rollback requests
+    check theirs.
 - Built and checked with Go 1.27.4 and govulncheck 1.10.0.
+
+### Fixed
+
+- A Network could use any driver Docker has (`macvlan`, `ipvlan`), putting containers on the host's
+  network past the gateway; a Volume any plugin. Networks are `bridge` and Volumes `local` now.
+  Variable names may not hold control characters and file names of Configs and Secrets have at most
+  255 bytes.
+- writeOnly values were missed under `contains`, `unevaluatedProperties`, `unevaluatedItems`,
+  `additionalItems`, draft-7 `dependencies` and anchor references (`"$ref": "#name"`); a value
+  passed through `b64enc` got into Configs and Workloads, and was not masked. Both walks of a schema
+  (secret paths and `--strict`) now know the same keywords.
+- A package's digest was the SHA-256 of its gzip archive, which depends on the Go version that
+  compressed it and on the format (directory or `.tgz`), and was read apart from the files rendered.
+  It is `Package.Digest` now, computed by `Load` from the paths and contents it read; `Digest(path)`
+  is gone. Releases installed before get a new revision on their next install or upgrade.
+- A package file growing while it was read could get past the 32 MiB limit; the limit counts what
+  is read.
+- `ParseMemory` and `ParseCPU` accepted 2^63, which does not fit an int64.
+- Release names are checked by every request, not only when a package is rendered: a name like
+  `../x` could reach a path on the server. `resource.ValidateReleaseName` also refuses `karga` and
+  `karga-…`, whose runtime objects would take the names of karga's own.
+- Errors of logs, volume backups and exec kept only their message: `errors.Is(err,
+  api.ErrNotFound)` failed for an unknown release. They keep their kind now.
+- `Status`, `Diff`, `Reconcile` and `Uninstall` of `Client` return a nil result with an error.
+- Exec no longer leaves a goroutine behind when its context is never canceled.
+- A package archive larger than 32 MiB is refused before it is read.
+- The API's `Tail`, `TTY` and `Stdin` request fields are omitted when zero, so a newer client of the
+  same major version talks to an older server.
+
+- A package could keep the server rendering forever: a nested `range` (over `until`, an integer
+  or a value) that writes nothing never reached the time or output limit. Every loop iteration now
+  counts (at most 1,000,000 per render) and the time limit is checked as loops run.
+- `until`, `untilStep`, `seq`, `repeat`, `indent` and `nindent` got past their size limits with
+  arguments near the limits of an integer (`seq -9223372036854775808`) and could exhaust the
+  server's memory. They are karga's own now, checking sizes without overflow; their results are
+  sprig's for every argument they accept.
 
 ## [0.1.0] - 2026-11-18
 
