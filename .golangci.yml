@@ -7,7 +7,7 @@ linters:
     depguard:
       rules:
         # The SDK (wire contract, package format) is shared by the CLI and the server: it must not
-        # know either of them, the runtime or the state database.
+        # know either of them or the runtime.
         sdk:
           files:
             - "$all"
@@ -20,8 +20,6 @@ linters:
               desc: the SDK must not depend on Docker
             - pkg: github.com/moby
               desc: the SDK must not depend on Docker
-            - pkg: modernc.org/sqlite
-              desc: the SDK must not depend on SQLite
         # The wire contract does not depend on the package engine: API clients need neither
         # templates nor JSON Schema.
         api:
