@@ -7,6 +7,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Added
 
+- `Listener.ListenerOptions` (`timeout`, `idleTimeout`, `maxBody`, `rateLimit`, `proxyProtocol`):
+  the administrator's limits of a gateway listener, shared by every route on it.
+  `SetGatewayListener` (`GatewayListenerSetRequest`) replaces them on an existing listener.
+
 - Requests that change what cannot be changed back have `Risk()` and `Confirmed`: uninstall,
   volume restore, removing a gateway listener, listening on an address other than loopback, and an
   upgrade or rollback with `DeleteVolumes`. The server refuses one with a risk that is not

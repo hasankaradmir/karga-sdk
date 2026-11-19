@@ -256,6 +256,23 @@ type Listener struct {
 	Name     string `json:"name"`
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
+	ListenerOptions
+}
+
+// ListenerOptions are the administrator's limits of a listener, shared by every route on it. The
+// server parses and checks them; empty means none (IdleTimeout: 5m).
+type ListenerOptions struct {
+	// Timeout (http, https) bounds a whole request, e.g. "30s": the gateway answers 504 after it.
+	Timeout string `json:"timeout,omitempty"`
+	// IdleTimeout closes a request or a tcp connection that sends nothing either way for this long.
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+	// MaxBody (http, https) refuses larger request bodies with 413, e.g. "10Mi".
+	MaxBody string `json:"maxBody,omitempty"`
+	// RateLimit (http, https) is the listener's requests per second or minute, e.g. "100/s"; the
+	// gateway answers 429 beyond it.
+	RateLimit string `json:"rateLimit,omitempty"`
+	// ProxyProtocol (tcp) sends the client's address to the backend first: "v1" or "v2".
+	ProxyProtocol string `json:"proxyProtocol,omitempty"`
 }
 
 // Settings are the host administrator's gateway: where it listens and on which listeners. They

@@ -144,6 +144,15 @@ type GatewayListenerRequest struct {
 	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
 }
 
+// GatewayListenerSetRequest replaces the options of a listener of the host gateway.
+type GatewayListenerSetRequest struct {
+	Name string `json:"name"`
+	ListenerOptions
+}
+
+// Validate checks the listener name.
+func (r GatewayListenerSetRequest) Validate() error { return dnsLabel("listener", r.Name) }
+
 // Validate checks the listener name, and the confirmation.
 func (r GatewayListenerRequest) Validate() error {
 	return errors.Join(dnsLabel("listener", r.Name), confirmed(r.Risk(), r.Confirmed))

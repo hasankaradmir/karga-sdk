@@ -90,6 +90,7 @@ func NewServer(b Backend, version string, opts Options) *Server {
 	s.mux.HandleFunc("POST /v1/gateway/access-log", mutation(s, noResult(b.SetGatewayAccessLog)))
 	s.mux.HandleFunc("POST /v1/gateway/listen", mutation(s, noResult(b.SetGatewayListen)))
 	s.mux.HandleFunc("POST /v1/gateway/listeners/add", mutation(s, noResult(b.AddGatewayListener)))
+	s.mux.HandleFunc("POST /v1/gateway/listeners/set", mutation(s, noResult(b.SetGatewayListener)))
 	s.mux.HandleFunc("POST /v1/gateway/listeners/remove", mutation(s, noResult(b.RemoveGatewayListener)))
 	s.mux.HandleFunc("POST /v1/logs", s.logs)
 	s.mux.HandleFunc("POST /v1/exec", s.exec)

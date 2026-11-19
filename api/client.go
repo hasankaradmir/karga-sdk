@@ -344,6 +344,11 @@ func (c *Client) AddGatewayListener(ctx context.Context, l Listener) error {
 	return do(ctx, c, "/v1/gateway/listeners/add", l)
 }
 
+// SetGatewayListener implements Backend.
+func (c *Client) SetGatewayListener(ctx context.Context, req GatewayListenerSetRequest) error {
+	return do(ctx, c, "/v1/gateway/listeners/set", req)
+}
+
 // RemoveGatewayListener implements Backend.
 func (c *Client) RemoveGatewayListener(ctx context.Context, req GatewayListenerRequest) error {
 	return do(ctx, c, "/v1/gateway/listeners/remove", req)

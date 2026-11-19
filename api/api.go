@@ -66,6 +66,8 @@ type GatewayAdmin interface {
 	SetGatewayAccessLog(ctx context.Context, req GatewayAccessLogRequest) error
 	SetGatewayListen(ctx context.Context, req GatewayListenRequest) error
 	AddGatewayListener(ctx context.Context, l Listener) error
+	// SetGatewayListener replaces the options of a listener; its port and protocol stay.
+	SetGatewayListener(ctx context.Context, req GatewayListenerSetRequest) error
 	RemoveGatewayListener(ctx context.Context, req GatewayListenerRequest) error
 }
 
