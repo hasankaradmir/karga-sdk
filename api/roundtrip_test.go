@@ -121,6 +121,15 @@ func (r *recorder) AddGatewayListener(_ context.Context, l Listener) error {
 func (r *recorder) SetGatewayListener(_ context.Context, req GatewayListenerSetRequest) error {
 	return r.rec("SetGatewayListener", req)
 }
+func (r *recorder) ValidateGateway(context.Context) (GatewayPlan, error) {
+	return GatewayPlan{Changes: []GatewayChange{{Kind: "listener", Name: "web", Action: "change", Fields: []string{"timeout: - -> 30s"}}}, Digest: "sha256:x"},
+		r.rec("ValidateGateway", nil)
+}
+
+func (r *recorder) ApplyGateway(_ context.Context, req GatewayApplyRequest) error {
+	return r.rec("ApplyGateway", req)
+}
+
 func (r *recorder) RemoveGatewayListener(_ context.Context, req GatewayListenerRequest) error {
 	return r.rec("RemoveGatewayListener", req)
 }
@@ -202,6 +211,16 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 		{"Resume", func() (any, error) { return nil, c.Resume(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
 		{"GatewayRoutes", func() (any, error) { return c.GatewayRoutes(ctx) }, nil},
 		{"GatewayHealth", func() (any, error) { return c.GatewayHealth(ctx) }, nil},
+		{"ValidateGateway", func() (any, error) {
+			p, err := c.ValidateGateway(ctx)
+			if err == nil && (p.Digest != "sha256:x" || len(p.Changes) != 1 || p.Changes[0].Fields[0] != "timeout: - -> 30s") {
+				return nil, fmt.Errorf("plan %+v", p)
+			}
+			return p, err
+		}, nil},
+		{"ApplyGateway", func() (any, error) {
+			return nil, c.ApplyGateway(ctx, GatewayApplyRequest{Digest: "sha256:x", Confirmed: true})
+		}, GatewayApplyRequest{Digest: "sha256:x", Confirmed: true}},
 		{"GatewaySettings", func() (any, error) {
 			s, users, err := c.GatewaySettings(ctx)
 			if err == nil && (!s.AccessLog || len(users["web"]) != 1) {
@@ -280,6 +299,7 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 			return err
 		},
 		"listener port": func() error { return c.AddGatewayListener(ctx, Listener{Name: "web", Port: 70000}) },
+		"apply digest":  func() error { return c.ApplyGateway(ctx, GatewayApplyRequest{}) },
 		"strategy": func() error {
 			_, err := c.Upgrade(ctx, UpgradeRequest{Name: "shop", Package: demoPkg, Strategy: "blue-green"}, nil)
 			return err

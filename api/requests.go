@@ -144,6 +144,21 @@ type GatewayListenerRequest struct {
 	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
 }
 
+// GatewayApplyRequest applies gateway.yaml as ValidateGateway saw it (Digest). The server refuses
+// a plan whose Risk is not Confirmed.
+type GatewayApplyRequest struct {
+	Digest    string `json:"digest"`
+	Confirmed bool   `json:"confirmed,omitempty"`
+}
+
+// Validate checks the digest is given.
+func (r GatewayApplyRequest) Validate() error {
+	if r.Digest == "" {
+		return errors.New("digest: the digest ValidateGateway returned is required")
+	}
+	return nil
+}
+
 // GatewayListenerSetRequest replaces the options of a listener of the host gateway.
 type GatewayListenerSetRequest struct {
 	Name string `json:"name"`
