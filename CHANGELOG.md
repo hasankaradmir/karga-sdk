@@ -6,6 +6,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- An exposure's `pathType`: `prefix` (the default) takes the path and below it by segment (`/api`
+  is not `/apix`; was a plain string prefix), `exact` only the path. `to` (with a prefix) replaces
+  the prefix in what the service receives (`to: /` serves `/api/orders` of `/api` as `/orders`).
+  `Exposure.MatchPath` and `RouteKey` read an exposure's route.
 - `ListenerOptions.RedirectHTTPS`: an http listener's redirect to HTTPS is a setting of its own.
 - Gateway documents (`GatewayDocument`, kind `Gateway`): `DiffGateway` compares one with the running
   settings (`GatewayPlan`, `GatewayChange`), `ApplyGateway` applies it as a new revision

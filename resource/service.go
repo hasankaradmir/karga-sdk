@@ -27,13 +27,19 @@ type ServicePort struct {
 	TargetPort string `json:"targetPort,omitempty"`
 }
 
-// Exposure publishes a service port on a gateway listener. On an http or https listener Host (and
-// Path, a prefix) select the service; a tcp listener belongs to one service.
+// Exposure publishes a service port on a gateway listener. On an http or https listener Host and
+// Path select the service; a tcp listener belongs to one service.
 type Exposure struct {
 	Port     string `json:"port"`
 	Listener string `json:"listener"`
 	Host     string `json:"host,omitempty"`
+	// Path selects the requests of the host the service gets (default "/"), by PathType: "prefix"
+	// (the default: the path and below it, by segment, so /api is not /apix) or "exact".
 	Path     string `json:"path,omitempty"`
+	PathType string `json:"pathType,omitempty"`
+	// To (with a prefix) replaces the path's prefix in what the service receives: to "/" serves
+	// /api/orders of path /api as /orders.
+	To string `json:"to,omitempty"`
 	// TLS names the Secret with the certificate (tls.crt) and key (tls.key); https listeners need it.
 	TLS *ExposureTLS `json:"tls,omitempty"`
 }
@@ -52,9 +58,47 @@ const (
 // HTTP reports whether the exposure is a route (selected by host and path) rather than a tcp port.
 func (e Exposure) HTTP() bool { return e.Host != "" }
 
-// route is what an exposure takes on its listener: the host and path of an HTTP route, nothing
-// for a TCP listener. Two exposures of a listener may not take the same route.
-func (e Exposure) route() string { return e.Host + e.Path }
+// Path types.
+const (
+	PathPrefix = "prefix"
+	PathExact  = "exact"
+)
+
+// MatchPath is the exposure's path as it is matched: a prefix without its trailing "/" ("/" stays
+// "/").
+func (e Exposure) MatchPath() string {
+	if e.PathType == PathExact || e.Path == "/" {
+		return e.Path
+	}
+	return strings.TrimSuffix(e.Path, "/")
+}
+
+// RouteKey is what an exposure takes on its listener: its host, path and path type; two exposures
+// of a listener may not take the same (none for a tcp listener).
+func (e Exposure) RouteKey() string {
+	if e.Host == "" {
+		return ""
+	}
+	return e.Host + e.MatchPath() + " (" + e.PathType + ")"
+}
+
+// validatePath checks an exposure's path, path type and to.
+func validatePath(at string, e Exposure) error {
+	switch {
+	case !strings.HasPrefix(e.Path, "/"):
+		return fmt.Errorf("%s.path: %q must start with /", at, e.Path)
+	case e.PathType != PathPrefix && e.PathType != PathExact:
+		return fmt.Errorf("%s.pathType: %q must be prefix or exact", at, e.PathType)
+	case e.To != "" && e.PathType == PathExact:
+		return fmt.Errorf("%s.to: %q needs pathType prefix", at, e.To)
+	case e.To != "" && !strings.HasPrefix(e.To, "/"):
+		return fmt.Errorf("%s.to: %q must start with /", at, e.To)
+	}
+	return nil
+}
+
+// route is RouteKey, for the messages.
+func (e Exposure) route() string { return e.RouteKey() }
 
 // PortNamed returns the service port called name.
 func (s *ServiceSpec) PortNamed(name string) (ServicePort, bool) {
@@ -86,8 +130,14 @@ func (s *ServiceSpec) setDefaults() {
 		}
 	}
 	for i := range s.Expose {
-		if s.Expose[i].Host != "" && s.Expose[i].Path == "" {
+		if s.Expose[i].Host == "" {
+			continue
+		}
+		if s.Expose[i].Path == "" {
 			s.Expose[i].Path = "/"
+		}
+		if s.Expose[i].PathType == "" {
+			s.Expose[i].PathType = PathPrefix
 		}
 	}
 }
@@ -130,16 +180,14 @@ func (s *ServiceSpec) validate() error {
 			errs = append(errs, fmt.Errorf("%s.listener: %q must name a gateway listener", at, e.Listener))
 		}
 		if e.Host == "" {
-			if e.Path != "" || e.TLS != nil {
-				errs = append(errs, fmt.Errorf("%s: path and tls need a host (a tcp listener takes neither)", at))
+			if e.Path != "" || e.PathType != "" || e.To != "" || e.TLS != nil {
+				errs = append(errs, fmt.Errorf("%s: path, pathType, to and tls need a host (a tcp listener takes none)", at))
 			}
 		} else {
 			if !routeHost.MatchString(e.Host) {
 				errs = append(errs, fmt.Errorf("%s.host: %q is not a lowercase host name", at, e.Host))
 			}
-			if !strings.HasPrefix(e.Path, "/") {
-				errs = append(errs, fmt.Errorf("%s.path: %q must start with /", at, e.Path))
-			}
+			errs = append(errs, validatePath(at, e))
 		}
 		if e.TLS != nil && !IsDNSLabel(e.TLS.Secret) {
 			errs = append(errs, fmt.Errorf("%s.tls.secret: %q must name a Secret", at, e.TLS.Secret))
