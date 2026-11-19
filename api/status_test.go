@@ -18,7 +18,7 @@ func TestStatusHealthy(t *testing.T) {
 		"exited":             {StatusReport{Release: deployed, Resources: []ResourceStatus{{Desired: DesiredApplied, Actual: ActualExited}}}, false},
 		"unhealthy":          {StatusReport{Release: deployed, Resources: []ResourceStatus{{Desired: DesiredApplied, Actual: ActualRunning, Health: HealthUnhealthy}}}, false},
 		"still starting":     {StatusReport{Release: deployed, Resources: []ResourceStatus{{Desired: DesiredApplied, Actual: ActualRunning, Health: HealthStarting}}}, false},
-		"service not routed": {StatusReport{Release: deployed, Resources: []ResourceStatus{{Desired: DesiredApplied, Actual: ActualNotRouted}}}, true},
+		"service not routed": {StatusReport{Release: deployed, Resources: []ResourceStatus{{Desired: DesiredApplied, Actual: ActualNotRouted}}}, false}, // its traffic goes nowhere
 	} {
 		if got := tc.rep.Healthy(); got != tc.want {
 			t.Errorf("%s: Healthy() = %v", name, got)

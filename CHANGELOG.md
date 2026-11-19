@@ -29,6 +29,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Changed
 
+- `ResourceStatus.Healthy` (and so `StatusReport.Healthy`) is false for a Service routed to no
+  backend (`not routed`): its traffic goes nowhere.
+
 - API 3.0 (a new major version: clients and servers of API 2 do not work together).
   - Every endpoint takes its own request type with a `Validate` method, and the server checks it
     before the backend sees it: `ReleaseRequest`, `RevisionRequest`, `ValuesRequest`,

@@ -189,10 +189,10 @@ const (
 	HealthUnhealthy = "unhealthy"
 )
 
-// Healthy reports whether the resource is applied and runs well: present, not exited, and not
-// failing or still waiting for its health check.
+// Healthy reports whether the resource is applied and runs well: present, not exited, routed to a
+// backend (a Service), and not failing or still waiting for its health check.
 func (s ResourceStatus) Healthy() bool {
-	return s.Desired == DesiredApplied && s.Actual != ActualMissing && s.Actual != ActualExited &&
+	return s.Desired == DesiredApplied && s.Actual != ActualMissing && s.Actual != ActualExited && s.Actual != ActualNotRouted &&
 		s.Health != HealthUnhealthy && s.Health != HealthStarting
 }
 
