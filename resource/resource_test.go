@@ -76,7 +76,7 @@ func TestDecodeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sv.Spec.(*ServiceSpec); got.Ports[0].TargetPort != "http" || got.Expose[0].Path != "/" {
+	if got := sv.Spec.(*ServiceSpec); got.Ports[0].TargetPort != "http" || got.Expose[0].Path != "/*" {
 		t.Fatalf("service defaults: %+v", got)
 	}
 	hw, err := Decode([]byte("apiVersion: karga.io/v1alpha1\nkind: Workload\nmetadata: {name: w}\nspec: {image: a, ports: [{name: dns, containerPort: 53, protocol: udp}, {name: http, containerPort: 8080}], healthCheck: {type: http}}\n"))
@@ -140,6 +140,11 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: pg, tls: {secret: c}}]}\n", "need a host"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, tls: {secret: Bad_Name}}]}\n", "must name a Secret"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a}, {port: a, listener: web, host: a}]}\n", "already serves"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api*}]}\n", "* may only end the path"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /a/*/b}]}\n", "* may only end the path"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api, to: /}]}\n", "needs a path ending in /*"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api/*, to: v2}]}\n", "to: \"v2\" must start with /"},
+		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: pg, to: /}]}\n", "need a host"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, config: c, mountPath: /d}]}\n", "exactly one"},
 		{head + "kind: Workload\nspec: {image: a, mounts: [{volume: v, mountPath: data}]}\n", "absolute"},
 		{head + "kind: Workload\nspec: {image: a, healthCheck: {type: grpc}}\n", "healthCheck.type"},
@@ -399,5 +404,18 @@ func TestQuantityLimits(t *testing.T) {
 	}
 	if n, err := ParseMemory("8388607Ti"); err != nil || n != 8388607<<40 {
 		t.Fatalf("8388607Ti: %d %v", n, err)
+	}
+}
+
+func TestExposurePaths(t *testing.T) {
+	// /api/* and /api are different routes; both are fine together.
+	mustDecode(t, "apiVersion: karga.io/v1alpha1\nkind: Service\nmetadata: {name: s}\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api/*, to: /}, {port: a, listener: web, host: a, path: /api}]}\n")
+	for path, want := range map[string]struct {
+		prefix string
+		ok     bool
+	}{"/*": {"", true}, "/api/*": {"/api", true}, "/healthz": {"", false}, "/": {"", false}} {
+		if p, ok := (Exposure{Path: path}).PathPrefix(); p != want.prefix || ok != want.ok {
+			t.Errorf("%s: %q %v", path, p, ok)
+		}
 	}
 }
