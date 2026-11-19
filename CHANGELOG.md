@@ -6,6 +6,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `ValidateGateway` and `ApplyGateway` (`GatewayPlan`, `GatewayChange`, `GatewayApplyRequest`): the
+  administrator's gateway.yaml is checked against the running settings, then applied by the
+  digest that was checked; the server computes the plan's risk and refuses it unconfirmed.
+  `State.Pending` says the file has changes not applied.
 
 - `Listener.ListenerOptions` (`timeout`, `idleTimeout`, `maxBody`, `rateLimit`, `proxyProtocol`):
   the administrator's limits of a gateway listener, shared by every route on it.

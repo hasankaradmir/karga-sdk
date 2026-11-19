@@ -294,8 +294,29 @@ type State struct {
 	Image     string   `json:"image,omitempty"`
 	Listen    []string `json:"listen"`
 	AccessLog bool     `json:"accessLog"`
+	// Pending says gateway.yaml has changes not applied yet (karga gateway validate).
+	Pending bool `json:"pending,omitempty"`
 	// Error says why the admin API could not be read, if it could not.
 	Error string `json:"error,omitempty"`
+}
+
+// GatewayPlan is what applying the administrator's gateway.yaml would change. Problems refuse it;
+// Risk (when not empty) needs the user's confirmation; Digest names the file content checked.
+type GatewayPlan struct {
+	Changes  []GatewayChange `json:"changes"`
+	Problems []string        `json:"problems,omitempty"`
+	Risk     string          `json:"risk,omitempty"`
+	Digest   string          `json:"digest"`
+}
+
+// GatewayChange is one difference between gateway.yaml and the running settings. Kind is
+// "listener", "listen" or "accessLog"; Action "add", "remove" or "change"; Fields say what
+// changes ("timeout: 30s -> 60s").
+type GatewayChange struct {
+	Kind   string   `json:"kind"`
+	Name   string   `json:"name,omitempty"`
+	Action string   `json:"action"`
+	Fields []string `json:"fields,omitempty"`
 }
 
 // Exposed is one line of `karga gateway status`: a service port served on a listener.

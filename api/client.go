@@ -349,6 +349,16 @@ func (c *Client) SetGatewayListener(ctx context.Context, req GatewayListenerSetR
 	return do(ctx, c, "/v1/gateway/listeners/set", req)
 }
 
+// ValidateGateway implements Backend.
+func (c *Client) ValidateGateway(ctx context.Context) (GatewayPlan, error) {
+	return call[GatewayPlan](ctx, c, "/v1/gateway/validate", struct{}{})
+}
+
+// ApplyGateway implements Backend.
+func (c *Client) ApplyGateway(ctx context.Context, req GatewayApplyRequest) error {
+	return do(ctx, c, "/v1/gateway/apply", req)
+}
+
 // RemoveGatewayListener implements Backend.
 func (c *Client) RemoveGatewayListener(ctx context.Context, req GatewayListenerRequest) error {
 	return do(ctx, c, "/v1/gateway/listeners/remove", req)
