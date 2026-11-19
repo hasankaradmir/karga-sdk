@@ -117,6 +117,10 @@ func (r *recorder) SetGatewayListen(_ context.Context, req GatewayListenRequest)
 func (r *recorder) AddGatewayListener(_ context.Context, l Listener) error {
 	return r.rec("AddGatewayListener", l)
 }
+
+func (r *recorder) SetGatewayListener(_ context.Context, req GatewayListenerSetRequest) error {
+	return r.rec("SetGatewayListener", req)
+}
 func (r *recorder) RemoveGatewayListener(_ context.Context, req GatewayListenerRequest) error {
 	return r.rec("RemoveGatewayListener", req)
 }
@@ -212,6 +216,10 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 			return nil, c.AddGatewayListener(ctx, Listener{Name: "web", Port: 8080, Protocol: "http"})
 		},
 			Listener{Name: "web", Port: 8080, Protocol: "http"}},
+		{"SetGatewayListener", func() (any, error) {
+			return nil, c.SetGatewayListener(ctx, GatewayListenerSetRequest{Name: "web", ListenerOptions: ListenerOptions{Timeout: "30s", RateLimit: "100/s"}})
+		},
+			GatewayListenerSetRequest{Name: "web", ListenerOptions: ListenerOptions{Timeout: "30s", RateLimit: "100/s"}}},
 		{"RemoveGatewayListener", func() (any, error) {
 			return nil, c.RemoveGatewayListener(ctx, GatewayListenerRequest{Name: "web", Confirmed: true})
 		},
