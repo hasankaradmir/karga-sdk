@@ -121,13 +121,21 @@ func (r *recorder) AddGatewayListener(_ context.Context, l Listener) error {
 func (r *recorder) SetGatewayListener(_ context.Context, req GatewayListenerSetRequest) error {
 	return r.rec("SetGatewayListener", req)
 }
-func (r *recorder) ValidateGateway(context.Context) (GatewayPlan, error) {
-	return GatewayPlan{Changes: []GatewayChange{{Kind: "listener", Name: "web", Action: "change", Fields: []string{"timeout: - -> 30s"}}}, Digest: "sha256:x"},
-		r.rec("ValidateGateway", nil)
+func (r *recorder) DiffGateway(_ context.Context, doc GatewayDocument) (GatewayPlan, error) {
+	return GatewayPlan{Changes: []GatewayChange{{Kind: "listener", Name: "web", Action: "change", Fields: []string{"timeout: - -> 30s"}}}},
+		r.rec("DiffGateway", doc)
 }
 
-func (r *recorder) ApplyGateway(_ context.Context, req GatewayApplyRequest) error {
-	return r.rec("ApplyGateway", req)
+func (r *recorder) ApplyGateway(_ context.Context, req GatewayApplyRequest) (GatewayRevision, error) {
+	return GatewayRevision{Revision: 2, Source: req.Source}, r.rec("ApplyGateway", req)
+}
+
+func (r *recorder) ExportGateway(_ context.Context, req GatewayExportRequest) (GatewayDocument, error) {
+	return GatewayDocument{Content: []byte("kind: Gateway\n")}, r.rec("ExportGateway", req)
+}
+
+func (r *recorder) GatewayHistory(context.Context) ([]GatewayRevision, error) {
+	return []GatewayRevision{{Revision: 1, Source: "apply"}}, r.rec("GatewayHistory", nil)
 }
 
 func (r *recorder) RemoveGatewayListener(_ context.Context, req GatewayListenerRequest) error {
@@ -211,16 +219,28 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 		{"Resume", func() (any, error) { return nil, c.Resume(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
 		{"GatewayRoutes", func() (any, error) { return c.GatewayRoutes(ctx) }, nil},
 		{"GatewayHealth", func() (any, error) { return c.GatewayHealth(ctx) }, nil},
-		{"ValidateGateway", func() (any, error) {
-			p, err := c.ValidateGateway(ctx)
-			if err == nil && (p.Digest != "sha256:x" || len(p.Changes) != 1 || p.Changes[0].Fields[0] != "timeout: - -> 30s") {
+		{"DiffGateway", func() (any, error) {
+			p, err := c.DiffGateway(ctx, GatewayDocument{Content: []byte("x")})
+			if err == nil && (len(p.Changes) != 1 || p.Changes[0].Fields[0] != "timeout: - -> 30s") {
 				return nil, fmt.Errorf("plan %+v", p)
 			}
 			return p, err
-		}, nil},
+		}, GatewayDocument{Content: []byte("x")}},
 		{"ApplyGateway", func() (any, error) {
-			return nil, c.ApplyGateway(ctx, GatewayApplyRequest{Digest: "sha256:x", Confirmed: true})
-		}, GatewayApplyRequest{Digest: "sha256:x", Confirmed: true}},
+			rev, err := c.ApplyGateway(ctx, GatewayApplyRequest{GatewayDocument: GatewayDocument{Content: []byte("x")}, Source: "rollback 1", Confirmed: true})
+			if err == nil && (rev.Revision != 2 || rev.Source != "rollback 1") {
+				return nil, fmt.Errorf("revision %+v", rev)
+			}
+			return rev, err
+		}, GatewayApplyRequest{GatewayDocument: GatewayDocument{Content: []byte("x")}, Source: "rollback 1", Confirmed: true}},
+		{"ExportGateway", func() (any, error) {
+			d, err := c.ExportGateway(ctx, GatewayExportRequest{Revision: 1})
+			if err == nil && string(d.Content) != "kind: Gateway\n" {
+				return nil, fmt.Errorf("document %q", d.Content)
+			}
+			return d, err
+		}, GatewayExportRequest{Revision: 1}},
+		{"GatewayHistory", func() (any, error) { return c.GatewayHistory(ctx) }, nil},
 		{"GatewaySettings", func() (any, error) {
 			s, users, err := c.GatewaySettings(ctx)
 			if err == nil && (!s.AccessLog || len(users["web"]) != 1) {
@@ -298,8 +318,8 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 			_, err := c.Exec(ctx, ExecRequest{Release: "shop", Workload: "web"})
 			return err
 		},
-		"listener port": func() error { return c.AddGatewayListener(ctx, Listener{Name: "web", Port: 70000}) },
-		"apply digest":  func() error { return c.ApplyGateway(ctx, GatewayApplyRequest{}) },
+		"listener port":   func() error { return c.AddGatewayListener(ctx, Listener{Name: "web", Port: 70000}) },
+		"export revision": func() error { _, err := c.ExportGateway(ctx, GatewayExportRequest{Revision: -1}); return err },
 		"strategy": func() error {
 			_, err := c.Upgrade(ctx, UpgradeRequest{Name: "shop", Package: demoPkg, Strategy: "blue-green"}, nil)
 			return err

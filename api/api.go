@@ -69,11 +69,14 @@ type GatewayAdmin interface {
 	// SetGatewayListener replaces the options of a listener; its port and protocol stay.
 	SetGatewayListener(ctx context.Context, req GatewayListenerSetRequest) error
 	RemoveGatewayListener(ctx context.Context, req GatewayListenerRequest) error
-	// ValidateGateway checks the administrator's gateway.yaml against what the gateway runs; it
-	// changes nothing. ApplyGateway applies the file it validated (by digest), or keeps the
-	// running settings when anything fails.
-	ValidateGateway(ctx context.Context) (GatewayPlan, error)
-	ApplyGateway(ctx context.Context, req GatewayApplyRequest) error
+	// DiffGateway compares a gateway document (kind Gateway) with the settings the gateway runs
+	// on; it changes nothing. ApplyGateway applies one as a new revision, or keeps the current
+	// revision when anything fails. ExportGateway returns a revision as a document (0: the
+	// current one); GatewayHistory lists the revisions kept, oldest first.
+	DiffGateway(ctx context.Context, doc GatewayDocument) (GatewayPlan, error)
+	ApplyGateway(ctx context.Context, req GatewayApplyRequest) (GatewayRevision, error)
+	ExportGateway(ctx context.Context, req GatewayExportRequest) (GatewayDocument, error)
+	GatewayHistory(ctx context.Context) ([]GatewayRevision, error)
 }
 
 // Remote is a Backend reached over the socket: it also knows the server's version.

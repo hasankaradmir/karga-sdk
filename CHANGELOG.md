@@ -6,10 +6,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
-- `ValidateGateway` and `ApplyGateway` (`GatewayPlan`, `GatewayChange`, `GatewayApplyRequest`): the
-  administrator's gateway.yaml is checked against the running settings, then applied by the
-  digest that was checked; the server computes the plan's risk and refuses it unconfirmed.
-  `State.Pending` says the file has changes not applied.
+- Gateway documents (`GatewayDocument`, kind `Gateway`): `DiffGateway` compares one with the running
+  settings (`GatewayPlan`, `GatewayChange`), `ApplyGateway` applies it as a new revision
+  (`GatewayRevision`; the server computes the risk and refuses it unconfirmed), `ExportGateway`
+  returns a revision and `GatewayHistory` lists them. `State.Revision` is the one in force.
 
 - `Listener.ListenerOptions` (`timeout`, `idleTimeout`, `maxBody`, `rateLimit`, `proxyProtocol`):
   the administrator's limits of a gateway listener, shared by every route on it.

@@ -294,19 +294,27 @@ type State struct {
 	Image     string   `json:"image,omitempty"`
 	Listen    []string `json:"listen"`
 	AccessLog bool     `json:"accessLog"`
-	// Pending says gateway.yaml has changes not applied yet (karga gateway validate).
-	Pending bool `json:"pending,omitempty"`
+	// Revision is the gateway settings revision in force (0: none applied, the defaults).
+	Revision int `json:"revision,omitempty"`
 	// Error says why the admin API could not be read, if it could not.
 	Error string `json:"error,omitempty"`
 }
 
-// GatewayPlan is what applying the administrator's gateway.yaml would change. Problems refuse it;
-// Risk (when not empty) needs the user's confirmation; Digest names the file content checked.
+// GatewayPlan is what applying a gateway document would change. Problems refuse it; Risk (when
+// not empty) needs the user's confirmation.
 type GatewayPlan struct {
 	Changes  []GatewayChange `json:"changes"`
 	Problems []string        `json:"problems,omitempty"`
 	Risk     string          `json:"risk,omitempty"`
-	Digest   string          `json:"digest"`
+}
+
+// GatewayRevision is one applied revision of the gateway settings: who applied it, and how
+// (Source: "apply", "listener add pg", "rollback 3").
+type GatewayRevision struct {
+	Revision int       `json:"revision"`
+	Time     time.Time `json:"time"`
+	Actor    string    `json:"actor,omitempty"`
+	Source   string    `json:"source"`
 }
 
 // GatewayChange is one difference between gateway.yaml and the running settings. Kind is
