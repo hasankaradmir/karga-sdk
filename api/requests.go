@@ -144,20 +144,38 @@ type GatewayListenerRequest struct {
 	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
 }
 
-// GatewayApplyRequest applies gateway.yaml as ValidateGateway saw it (Digest). The server refuses
-// a plan whose Risk is not Confirmed.
-type GatewayApplyRequest struct {
-	Digest    string `json:"digest"`
-	Confirmed bool   `json:"confirmed,omitempty"`
+// MaxGatewayDocument bounds a gateway document.
+const MaxGatewayDocument = 1 << 20
+
+// GatewayDocument is a gateway settings document (apiVersion karga.io/v1alpha1, kind Gateway), as
+// the user wrote it.
+type GatewayDocument struct {
+	Content []byte `json:"content"`
 }
 
-// Validate checks the digest is given.
-func (r GatewayApplyRequest) Validate() error {
-	if r.Digest == "" {
-		return errors.New("digest: the digest ValidateGateway returned is required")
+// Validate checks the document's size.
+func (d GatewayDocument) Validate() error {
+	if len(d.Content) > MaxGatewayDocument {
+		return fmt.Errorf("content: %d bytes, more than %d", len(d.Content), MaxGatewayDocument)
 	}
 	return nil
 }
+
+// GatewayApplyRequest applies a gateway document. Source says what it comes from for the history
+// ("apply" if empty, "rollback 3"). The server refuses a plan whose Risk is not Confirmed.
+type GatewayApplyRequest struct {
+	GatewayDocument
+	Source    string `json:"source,omitempty"`
+	Confirmed bool   `json:"confirmed,omitempty"`
+}
+
+// GatewayExportRequest names a revision of the gateway settings (0: the current one).
+type GatewayExportRequest struct {
+	Revision int `json:"revision,omitempty"`
+}
+
+// Validate checks the revision.
+func (r GatewayExportRequest) Validate() error { return nonNegative("revision", r.Revision) }
 
 // GatewayListenerSetRequest replaces the options of a listener of the host gateway.
 type GatewayListenerSetRequest struct {

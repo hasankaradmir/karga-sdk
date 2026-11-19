@@ -349,14 +349,24 @@ func (c *Client) SetGatewayListener(ctx context.Context, req GatewayListenerSetR
 	return do(ctx, c, "/v1/gateway/listeners/set", req)
 }
 
-// ValidateGateway implements Backend.
-func (c *Client) ValidateGateway(ctx context.Context) (GatewayPlan, error) {
-	return call[GatewayPlan](ctx, c, "/v1/gateway/validate", struct{}{})
+// DiffGateway implements Backend.
+func (c *Client) DiffGateway(ctx context.Context, doc GatewayDocument) (GatewayPlan, error) {
+	return call[GatewayPlan](ctx, c, "/v1/gateway/diff", doc)
 }
 
 // ApplyGateway implements Backend.
-func (c *Client) ApplyGateway(ctx context.Context, req GatewayApplyRequest) error {
-	return do(ctx, c, "/v1/gateway/apply", req)
+func (c *Client) ApplyGateway(ctx context.Context, req GatewayApplyRequest) (GatewayRevision, error) {
+	return call[GatewayRevision](ctx, c, "/v1/gateway/apply", req)
+}
+
+// ExportGateway implements Backend.
+func (c *Client) ExportGateway(ctx context.Context, req GatewayExportRequest) (GatewayDocument, error) {
+	return call[GatewayDocument](ctx, c, "/v1/gateway/export", req)
+}
+
+// GatewayHistory implements Backend.
+func (c *Client) GatewayHistory(ctx context.Context) ([]GatewayRevision, error) {
+	return call[[]GatewayRevision](ctx, c, "/v1/gateway/history", struct{}{})
 }
 
 // RemoveGatewayListener implements Backend.
