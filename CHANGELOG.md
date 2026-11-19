@@ -6,6 +6,7 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `ListenerOptions.RedirectHTTPS`: an http listener's redirect to HTTPS is a setting of its own.
 - Gateway documents (`GatewayDocument`, kind `Gateway`): `DiffGateway` compares one with the running
   settings (`GatewayPlan`, `GatewayChange`), `ApplyGateway` applies it as a new revision
   (`GatewayRevision`; the server computes the risk and refuses it unconfirmed), `ExportGateway`
