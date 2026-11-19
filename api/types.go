@@ -273,6 +273,9 @@ type ListenerOptions struct {
 	RateLimit string `json:"rateLimit,omitempty"`
 	// ProxyProtocol (tcp) sends the client's address to the backend first: "v1" or "v2".
 	ProxyProtocol string `json:"proxyProtocol,omitempty"`
+	// RedirectHTTPS (http) answers plain requests for the hosts an https listener serves (and this
+	// one does not) with a redirect to that listener.
+	RedirectHTTPS bool `json:"redirectHTTPS,omitempty"`
 }
 
 // Settings are the host administrator's gateway: where it listens and on which listeners. They
