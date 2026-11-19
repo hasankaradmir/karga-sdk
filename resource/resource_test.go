@@ -140,7 +140,6 @@ func TestDecodeErrors(t *testing.T) {
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: pg, tls: {secret: c}}]}\n", "need a host"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, tls: {secret: Bad_Name}}]}\n", "must name a Secret"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a}, {port: a, listener: web, host: a}]}\n", "already serves"},
-		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api/*}]}\n", "* matches nothing"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api, pathType: regex}]}\n", "must be prefix or exact"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api, pathType: exact, to: /}]}\n", "needs pathType prefix"},
 		{head + "kind: Service\nspec: {workload: w, ports: [{name: a, port: 1}], expose: [{port: a, listener: web, host: a, path: /api, to: v2}]}\n", "to: \"v2\" must start with /"},

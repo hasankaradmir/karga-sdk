@@ -87,8 +87,6 @@ func validatePath(at string, e Exposure) error {
 	switch {
 	case !strings.HasPrefix(e.Path, "/"):
 		return fmt.Errorf("%s.path: %q must start with /", at, e.Path)
-	case strings.Contains(e.Path, "*"):
-		return fmt.Errorf("%s.path: %q: * matches nothing; set pathType (prefix or exact)", at, e.Path)
 	case e.PathType != PathPrefix && e.PathType != PathExact:
 		return fmt.Errorf("%s.pathType: %q must be prefix or exact", at, e.PathType)
 	case e.To != "" && e.PathType == PathExact:
