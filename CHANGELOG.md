@@ -75,6 +75,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- Hidden files in `templates/` (macOS `._*` and `.DS_Store`, editor files) were rendered as
+  templates and failed the package (`yaml: control characters are not allowed`); they are ignored.
+
 - A client the socket's permissions refused got `karga-server is not running`; it gets
   `permission denied on <socket>` now (not `ErrNotRunning`).
 
