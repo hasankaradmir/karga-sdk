@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,6 +49,9 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 	if err != nil {
 		var op *net.OpError
 		if errors.As(err, &op) && op.Op == "dial" {
+			if errors.Is(err, fs.ErrPermission) {
+				return nil, fmt.Errorf("%w on %s", fs.ErrPermission, c.socket)
+			}
 			return nil, fmt.Errorf("%w (no server on %s): start it with 'sudo systemctl start karga-server'", ErrNotRunning, c.socket)
 		}
 		return nil, err
