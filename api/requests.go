@@ -287,9 +287,27 @@ func (r VolumeRestoreRequest) Validate() error {
 	return errors.Join(err, confirmed(r.Risk(), r.Confirmed))
 }
 
-// Risk says what the restore overwrites.
+// Risk says what the restore replaces and stops.
 func (r VolumeRestoreRequest) Risk() string {
-	return fmt.Sprintf("this stops the workloads mounting volume %s of %s and overwrites its files with %s", r.Volume, r.Release, cmp.Or(r.Name, "the backup"))
+	what := fmt.Sprintf("replaces the files of volume %s of %s with %s", r.Volume, r.Release, cmp.Or(r.Name, "the backup"))
+	if r.Merge {
+		what = fmt.Sprintf("writes %s over the files of volume %s of %s", cmp.Or(r.Name, "the backup"), r.Volume, r.Release)
+	}
+	keep := "; its current files are kept as a restore point (karga volume undo-restore)"
+	if r.NoRestorePoint {
+		keep = "; without a restore point, its current files cannot be brought back"
+	}
+	return "this stops the workloads using the volume and those that depend on them, " + what + keep
+}
+
+// Validate checks the names.
+func (r VolumeUndoRestoreRequest) Validate() error {
+	return errors.Join(resource.ValidateReleaseName(r.Release), dnsLabel("volume", r.Volume), confirmed(r.Risk(), r.Confirmed))
+}
+
+// Risk says what the undo replaces and stops.
+func (r VolumeUndoRestoreRequest) Risk() string {
+	return fmt.Sprintf("this stops the workloads using volume %s of %s and those that depend on them, and puts back the files it had before its last restore", r.Volume, r.Release)
 }
 
 // Validate checks the listener.

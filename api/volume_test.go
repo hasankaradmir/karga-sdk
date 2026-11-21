@@ -1,0 +1,44 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// A volume operation that did its work but whose workloads did not get ready again reports
+// ErrNotReady with its result: a backup's file is complete, a restore's files are in place.
+func TestVolumeNotReadyKeepsTheResult(t *testing.T) {
+	b := &recorder{err: fmt.Errorf("workload db keeps restarting: %w", ErrNotReady)}
+	c := NewClient(serve(t, b))
+	ctx := context.Background()
+
+	var out bytes.Buffer
+	res, err := c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "data"}, &out)
+	if !errors.Is(err, ErrNotReady) || !strings.Contains(err.Error(), "keeps restarting") || out.String() != "backup" || res == nil || len(res.Stopped) != 1 {
+		t.Fatalf("backup: %v %q %+v", err, out.String(), res)
+	}
+	r, err := c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data", Confirmed: true}, strings.NewReader("backup"), nil)
+	if !errors.Is(err, ErrNotReady) || r == nil || r.RestorePoint == "" {
+		t.Fatalf("restore: %v %+v", err, r)
+	}
+}
+
+func TestVolumeRisks(t *testing.T) {
+	for _, tc := range []struct {
+		r    interface{ Risk() string }
+		want string
+	}{
+		{VolumeRestoreRequest{Release: "shop", Volume: "data", Name: "d.tgz"}, "replaces the files of volume data of shop with d.tgz; its current files are kept as a restore point"},
+		{VolumeRestoreRequest{Release: "shop", Volume: "data", Merge: true}, "writes the backup over the files of volume data of shop"},
+		{VolumeRestoreRequest{Release: "shop", Volume: "data", NoRestorePoint: true}, "without a restore point, its current files cannot be brought back"},
+		{VolumeUndoRestoreRequest{Release: "shop", Volume: "data"}, "puts back the files it had before its last restore"},
+	} {
+		if risk := tc.r.Risk(); !strings.Contains(risk, tc.want) || !strings.Contains(risk, "stops the workloads") {
+			t.Errorf("%+v: %q", tc.r, risk)
+		}
+	}
+}
