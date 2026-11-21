@@ -95,7 +95,8 @@ func TestAPIVersionContract(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&e)
 		return resp.StatusCode, e.Error
 	}
-	if code, msg := post("4.0"); code != http.StatusBadRequest || !strings.HasSuffix(msg, "karga speaks API 4.0, karga-server API "+Version+": upgrade karga-server") {
+	newer := fmt.Sprintf("%d.0", Major+1)
+	if code, msg := post(newer); code != http.StatusBadRequest || !strings.HasSuffix(msg, "karga speaks API "+newer+", karga-server API "+Version+": upgrade karga-server") {
 		t.Fatalf("newer client: %d %q", code, msg)
 	}
 	if code, msg := post("1"); code != http.StatusBadRequest || !strings.HasSuffix(msg, "upgrade karga") {

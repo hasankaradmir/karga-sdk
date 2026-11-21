@@ -100,6 +100,7 @@ func NewServer(b Backend, version string, opts Options) *Server {
 	s.mux.HandleFunc("POST /v1/exec", s.exec)
 	s.mux.HandleFunc("POST /v1/volume/backup", s.volumeBackup)
 	s.mux.HandleFunc("POST /v1/volume/restore", s.volumeRestore)
+	s.mux.HandleFunc("POST /v1/volume/undo-restore", s.volumeUndoRestore)
 	return s
 }
 
@@ -252,43 +253,50 @@ func deploy[Req any](s *Server, fn func(ctx context.Context, req Req, pkg string
 				return
 			}
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		// The client knows the operation was received once the headers arrive.
-		w.WriteHeader(http.StatusOK)
-		_ = http.NewResponseController(w).Flush()
-		// Lines are written by one goroutine so a slow or stopped client never holds up the operation:
-		// progress events are dropped when it falls behind, and a stalled write gives up after a while.
-		lines := make(chan deployLine, 64)
-		written := make(chan struct{})
-		go func() {
-			defer close(written)
-			rc := http.NewResponseController(w)
-			enc := json.NewEncoder(w)
-			for l := range lines {
-				_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
-				if enc.Encode(l) == nil {
-					_ = rc.Flush()
-				}
-			}
-		}()
-		progress := func(e Event) {
-			select {
-			case lines <- deployLine{Event: &e}:
-			default: // the client is behind; it still gets the result
-			}
-		}
-		// The operation goes on if the client goes away; only its progress reports are lost.
-		ctx := detach(r.Context())
-		res, err := fn(ctx, req.Request, pkgPath, progress)
-		line := deployLine{Result: res, Done: true}
-		if err != nil {
-			line.Error = s.message(err)
-			line.Code, _ = s.codeOf(err)
-		}
-		lines <- line
-		close(lines)
-		<-written
+		s.progressed(w, r, func(ctx context.Context, progress func(Event)) (deployLine, error) {
+			res, err := fn(ctx, req.Request, pkgPath, progress)
+			return deployLine{Result: res}, err
+		})
 	}
+}
+
+// progressed streams an operation's progress events as JSON lines, then its outcome. The operation
+// goes on if the client goes away; only its progress reports are lost.
+func (s *Server) progressed(w http.ResponseWriter, r *http.Request, run func(ctx context.Context, progress func(Event)) (deployLine, error)) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	// The client knows the operation was received once the headers arrive.
+	w.WriteHeader(http.StatusOK)
+	_ = http.NewResponseController(w).Flush()
+	// Lines are written by one goroutine so a slow or stopped client never holds up the operation:
+	// progress events are dropped when it falls behind, and a stalled write gives up after a while.
+	lines := make(chan deployLine, 64)
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		rc := http.NewResponseController(w)
+		enc := json.NewEncoder(w)
+		for l := range lines {
+			_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if enc.Encode(l) == nil {
+				_ = rc.Flush()
+			}
+		}
+	}()
+	progress := func(e Event) {
+		select {
+		case lines <- deployLine{Event: &e}:
+		default: // the client is behind; it still gets the result
+		}
+	}
+	line, err := run(detach(r.Context()), progress)
+	line.Done = true
+	if err != nil {
+		line.Error = s.message(err)
+		line.Code, _ = s.codeOf(err)
+	}
+	lines <- line
+	close(lines)
+	<-written
 }
 
 // writeTimeout bounds one write to a client that stopped reading.
@@ -297,13 +305,13 @@ const writeTimeout = 10 * time.Second
 // streamed writes a streamed response body. The status is sent with the first byte of the body, so
 // an error before it (an unknown release) is answered as any other error, with its kind; an error
 // after it goes in trailers, with its kind too.
-func (s *Server) streamed(w http.ResponseWriter, contentType string, fn func(io.Writer) error) {
+func (s *Server) streamed(w http.ResponseWriter, contentType string, fn func(io.Writer) (any, error)) {
 	started := false
 	start := func() {
 		if !started {
 			started = true
 			w.Header().Set("Content-Type", contentType)
-			w.Header().Set("Trailer", trailerError+", "+trailerCode)
+			w.Header().Set("Trailer", trailerError+", "+trailerCode+", "+trailerResult)
 			w.WriteHeader(http.StatusOK)
 		}
 	}
@@ -316,12 +324,17 @@ func (s *Server) streamed(w http.ResponseWriter, contentType string, fn func(io.
 		}
 		return n, err
 	})
-	err := fn(out)
+	res, err := fn(out)
 	if err != nil && !started {
 		s.writeError(w, err)
 		return
 	}
 	start()
+	if res != nil {
+		if b, merr := json.Marshal(res); merr == nil {
+			w.Header().Set(trailerResult, string(b))
+		}
+	}
 	if err != nil {
 		code, _ := s.codeOf(err)
 		w.Header().Set(trailerError, s.message(err))
@@ -334,12 +347,12 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, &req) {
 		return
 	}
-	s.streamed(w, "text/plain", func(out io.Writer) error {
+	s.streamed(w, "text/plain", func(out io.Writer) (any, error) {
 		err := s.b.Logs(r.Context(), req, out)
 		if errors.Is(err, context.Canceled) {
-			return nil // the client stopped following
+			return nil, nil // the client stopped following
 		}
-		return err
+		return nil, err
 	})
 }
 
@@ -348,8 +361,12 @@ func (s *Server) volumeBackup(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, &req) {
 		return
 	}
-	s.streamed(w, "application/gzip", func(out io.Writer) error {
-		return s.b.BackupVolume(r.Context(), req, out)
+	s.streamed(w, "application/gzip", func(out io.Writer) (any, error) {
+		res, err := s.b.BackupVolume(r.Context(), req, out)
+		if res == nil {
+			return nil, err
+		}
+		return res, err
 	})
 }
 
@@ -357,14 +374,20 @@ func (s *Server) volumeBackup(w http.ResponseWriter, r *http.Request) {
 // end even if the client goes away: a restore cut short would leave the volume half overwritten.
 func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	force, err := strconv.ParseBool(cmp.Or(q.Get("force"), "false"))
-	confirmed, cerr := strconv.ParseBool(cmp.Or(q.Get("confirmed"), "false"))
-	err = errors.Join(err, cerr)
-	req := VolumeRestoreRequest{Release: q.Get("release"), Volume: q.Get("volume"), Force: force, Name: q.Get("name"), Confirmed: confirmed}
+	var err error
+	flag := func(name string) bool {
+		v, ferr := strconv.ParseBool(cmp.Or(q.Get(name), "false"))
+		if ferr != nil {
+			err = errors.Join(err, fmt.Errorf("%s: %w", name, ferr))
+		}
+		return v
+	}
+	req := VolumeRestoreRequest{Release: q.Get("release"), Volume: q.Get("volume"), Force: flag("force"), Merge: flag("merge"),
+		NoRestorePoint: flag("noRestorePoint"), Name: q.Get("name"), Confirmed: flag("confirmed")}
 	if err == nil {
 		err = validate(req)
 	} else {
-		err = fmt.Errorf("%w: force, confirmed: %w", ErrInvalid, err)
+		err = fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if err != nil {
 		s.writeError(w, err)
@@ -389,12 +412,26 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	err = s.b.RestoreVolume(detach(r.Context()), req, f)
-	if err != nil {
+	s.progressed(w, r, func(ctx context.Context, progress func(Event)) (deployLine, error) {
+		res, err := s.b.RestoreVolume(ctx, req, f, progress)
+		return deployLine{Volume: res}, err
+	})
+}
+
+// volumeUndoRestore puts back a volume's restore point, to the end even if the client goes away.
+func (s *Server) volumeUndoRestore(w http.ResponseWriter, r *http.Request) {
+	var req VolumeUndoRestoreRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	if err := validate(req); err != nil {
 		s.writeError(w, err)
 		return
 	}
-	writeJSON(w, struct{}{})
+	s.progressed(w, r, func(ctx context.Context, progress func(Event)) (deployLine, error) {
+		res, err := s.b.UndoRestoreVolume(ctx, req, progress)
+		return deployLine{Volume: res}, err
+	})
 }
 
 // exec upgrades the connection and carries the command's streams as frames.

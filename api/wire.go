@@ -77,9 +77,11 @@ type Operation struct {
 	Revision int    `json:"revision"`
 	Status   string `json:"status"`
 	// Actor is who asked for it: a user of the karga CLI, or karga-server (repairs, resumes).
-	Actor      string    `json:"actor,omitempty"`
-	Steps      []Step    `json:"steps,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	Actor string `json:"actor,omitempty"`
+	Steps []Step `json:"steps,omitempty"`
+	Error string `json:"error,omitempty"`
+	// Downtime is how long the operation kept workloads stopped (volume backups and restores).
+	Downtime   Duration  `json:"downtime,omitempty"`
 	StartedAt  time.Time `json:"startedAt"`
 	FinishedAt time.Time `json:"finishedAt,omitzero"`
 }

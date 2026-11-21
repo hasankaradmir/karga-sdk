@@ -131,23 +131,49 @@ type LogsRequest struct {
 	Follow bool `json:"follow,omitempty"`
 }
 
-// VolumeBackupRequest copies a volume's files out, as a gzip-compressed tar, through a workload that mounts it. Stop stops
-// the workloads mounting it for a consistent copy; otherwise the copy is taken live.
+// VolumeBackupRequest copies a volume's files out, as a gzip-compressed tar, through a workload that
+// mounts it. By default the workloads writing to it, and those that depend on them, are stopped for a
+// consistent copy and started again, in order, once it is taken; Live copies while they run.
 type VolumeBackupRequest struct {
 	Release string `json:"release"`
 	Volume  string `json:"volume"`
-	Stop    bool   `json:"stop,omitempty"`
+	Live    bool   `json:"live,omitempty"`
 }
 
-// VolumeRestoreRequest writes a backup into a volume, overwriting files with the same names; the
-// workloads mounting it are stopped meanwhile. Force restores a backup of another volume.
+// VolumeRestoreRequest replaces a volume's files with a backup's: the workloads mounting it, and
+// those that depend on them, are stopped meanwhile and started again in order. The volume's files
+// are kept as its restore point first (VolumeUndoRestoreRequest) unless NoRestorePoint. Merge
+// writes the backup over the files instead, keeping those it does not have. Force restores a
+// backup of another volume.
 type VolumeRestoreRequest struct {
-	Release string `json:"release"`
-	Volume  string `json:"volume"`
-	Force   bool   `json:"force,omitempty"`
+	Release        string `json:"release"`
+	Volume         string `json:"volume"`
+	Force          bool   `json:"force,omitempty"`
+	Merge          bool   `json:"merge,omitempty"`
+	NoRestorePoint bool   `json:"noRestorePoint,omitempty"`
 	// Name names the backup in messages (its file name).
 	Name      string `json:"name,omitempty"`
 	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
+}
+
+// VolumeUndoRestoreRequest puts back the files a volume had before its last restore (its restore
+// point), the same way a restore does.
+type VolumeUndoRestoreRequest struct {
+	Release   string `json:"release"`
+	Volume    string `json:"volume"`
+	Confirmed bool   `json:"confirmed,omitempty"` // see Risk
+}
+
+// VolumeResult is what a volume backup, restore or undo did.
+type VolumeResult struct {
+	Release string `json:"release"`
+	Volume  string `json:"volume"`
+	// Stopped are the workloads stopped meanwhile, in the order they started again.
+	Stopped []string `json:"stopped,omitempty"`
+	// Downtime is from the first stop until the last of them was ready.
+	Downtime Duration `json:"downtime,omitempty"`
+	// RestorePoint is where a restore kept the volume's previous files.
+	RestorePoint string `json:"restorePoint,omitempty"`
 }
 
 // ResourceStatus compares one applied resource with what the runtime reports.

@@ -134,40 +134,40 @@ func (c *Client) deploy(ctx context.Context, path string, req any, progress func
 	if err != nil {
 		return nil, err
 	}
-	res, err := c.follow(resp, progress)
+	line, err := c.follow(resp, progress)
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
 	}
-	return res, err
+	return line.Result, err
 }
 
-// follow reads the progress lines of a deploy response until its outcome.
+// follow reads the progress lines of a deploy response until its outcome, the last line.
 // Canceling the request's context closes resp's body, which ends the loop.
-func (c *Client) follow(resp *http.Response, progress func(Event)) (*Result, error) {
+func (c *Client) follow(resp *http.Response, progress func(Event)) (deployLine, error) {
 	defer func() { _ = resp.Body.Close() }()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), maxLine)
 	for sc.Scan() {
 		var l deployLine
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
-			return nil, fmt.Errorf("karga-server: %w", err)
+			return deployLine{}, fmt.Errorf("karga-server: %w", err)
 		}
 		if l.Event != nil && progress != nil {
 			progress(*l.Event)
 		}
 		if l.Done {
 			if l.Error != "" {
-				return l.Result, remote(l.Error, l.Code)
+				return l, remote(l.Error, l.Code)
 			}
-			return l.Result, nil
+			return l, nil
 		}
 	}
 	if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
-		return nil, fmt.Errorf("karga-server: a progress line is longer than %d bytes", maxLine)
+		return deployLine{}, fmt.Errorf("karga-server: a progress line is longer than %d bytes", maxLine)
 	} else if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("%w: %w", ErrDisconnected, err)
+		return deployLine{}, fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
-	return nil, ErrDisconnected
+	return deployLine{}, ErrDisconnected
 }
 
 // maxLine bounds one line of a deploy response.
@@ -273,48 +273,81 @@ func (c *Client) Resume(ctx context.Context, req ReleaseRequest) error {
 	return do(ctx, c, "/v1/resume", req)
 }
 
-// download copies a streamed response to w and returns the error the server put in its trailer.
-func (c *Client) download(ctx context.Context, path string, in any, w io.Writer) error {
+// download copies a streamed response to w and returns the error the server put in its trailer,
+// and its trailers (a result, for some).
+func (c *Client) download(ctx context.Context, path string, in any, w io.Writer) (http.Header, error) {
 	body, err := json.Marshal(in)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := c.post(ctx, path, bytes.NewReader(body), nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		if ctx.Err() != nil {
-			return nil // the caller stopped (e.g. logs -f interrupted)
+			return nil, nil // the caller stopped (e.g. logs -f interrupted)
 		}
-		return err
+		return nil, err
 	}
 	if msg := resp.Trailer.Get(trailerError); msg != "" {
-		return remote(msg, resp.Trailer.Get(trailerCode))
+		return resp.Trailer, remote(msg, resp.Trailer.Get(trailerCode))
 	}
-	return nil
+	return resp.Trailer, nil
 }
 
 // Logs implements Backend.
 func (c *Client) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
-	return c.download(ctx, "/v1/logs", req, w)
+	_, err := c.download(ctx, "/v1/logs", req, w)
+	return err
 }
 
-// BackupVolume implements Backend.
-func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) error {
-	return c.download(ctx, "/v1/volume/backup", req, w)
+// BackupVolume implements Backend. A copy that is complete comes with its result, also when the
+// workloads did not get ready again (ErrNotReady).
+func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (*VolumeResult, error) {
+	trailer, err := c.download(ctx, "/v1/volume/backup", req, w)
+	var res *VolumeResult
+	if raw := trailer.Get(trailerResult); raw != "" {
+		res = new(VolumeResult)
+		if jerr := json.Unmarshal([]byte(raw), res); jerr != nil {
+			return nil, errors.Join(err, fmt.Errorf("karga-server: result: %w", jerr))
+		}
+	}
+	return res, err
 }
 
 // RestoreVolume implements Backend.
-func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error {
+func (c *Client) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader, progress func(Event)) (*VolumeResult, error) {
 	q := url.Values{"release": {req.Release}, "volume": {req.Volume}, "name": {req.Name}, "force": {strconv.FormatBool(req.Force)},
+		"merge": {strconv.FormatBool(req.Merge)}, "noRestorePoint": {strconv.FormatBool(req.NoRestorePoint)},
 		"confirmed": {strconv.FormatBool(req.Confirmed)}}
 	resp, err := c.post(ctx, "/v1/volume/restore?"+q.Encode(), r, http.Header{"Content-Type": {"application/gzip"}})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return resp.Body.Close()
+	line, err := c.follow(resp, progress)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
+	}
+	return line.Volume, err
+}
+
+// UndoRestoreVolume implements Backend.
+func (c *Client) UndoRestoreVolume(ctx context.Context, req VolumeUndoRestoreRequest, progress func(Event)) (*VolumeResult, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.post(ctx, "/v1/volume/undo-restore", bytes.NewReader(body), nil)
+	if err != nil {
+		return nil, err
+	}
+	line, err := c.follow(resp, progress)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
+	}
+	return line.Volume, err
 }
 
 // GatewayRoutes implements Backend.

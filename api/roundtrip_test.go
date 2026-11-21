@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hasankaradmir/karga-sdk/internal/testsock"
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -83,16 +84,21 @@ func (r *recorder) Exec(_ context.Context, req ExecRequest) (int, error) {
 	_, _ = io.WriteString(req.Stdout, "out")
 	return 3, r.rec("Exec", ExecRequest{Release: req.Release, Workload: req.Workload, ExecOptions: ExecOptions{Cmd: req.Cmd}})
 }
-func (r *recorder) BackupVolume(_ context.Context, req VolumeBackupRequest, w io.Writer) error {
+func (r *recorder) BackupVolume(_ context.Context, req VolumeBackupRequest, w io.Writer) (*VolumeResult, error) {
 	_, _ = io.WriteString(w, "backup")
-	return r.rec("BackupVolume", req)
+	return &VolumeResult{Release: req.Release, Volume: req.Volume, Stopped: []string{"db"}, Downtime: Duration(2 * time.Second)}, r.rec("BackupVolume", req)
 }
-func (r *recorder) RestoreVolume(_ context.Context, req VolumeRestoreRequest, in io.Reader) error {
+func (r *recorder) RestoreVolume(_ context.Context, req VolumeRestoreRequest, in io.Reader, progress func(Event)) (*VolumeResult, error) {
 	data, _ := io.ReadAll(in)
 	if string(data) != "backup" {
-		return fmt.Errorf("restored %q", data)
+		return nil, fmt.Errorf("restored %q", data)
 	}
-	return r.rec("RestoreVolume", req)
+	progress(Event{Kind: "Volume", Name: req.Volume, Phase: "stop", Detail: "stopping db"})
+	return &VolumeResult{Release: req.Release, Volume: req.Volume, RestorePoint: "/var/lib/karga/restore-points/shop/data.tar.gz"}, r.rec("RestoreVolume", req)
+}
+func (r *recorder) UndoRestoreVolume(_ context.Context, req VolumeUndoRestoreRequest, progress func(Event)) (*VolumeResult, error) {
+	progress(Event{Kind: "Volume", Name: req.Volume, Phase: "stop", Detail: "stopping db"})
+	return &VolumeResult{Release: req.Release, Volume: req.Volume, Stopped: []string{"db"}}, r.rec("UndoRestoreVolume", req)
 }
 func (r *recorder) Reconcile(_ context.Context, req ReconcileRequest) (*ReconcileResult, error) {
 	return &ReconcileResult{Release: req.Name}, r.rec("Reconcile", req)
@@ -208,12 +214,29 @@ func TestEveryEndpointRoundTrips(t *testing.T) {
 		}, ExecRequest{Release: "shop", Workload: "web", ExecOptions: ExecOptions{Cmd: []string{"ls"}}}},
 		{"BackupVolume", func() (any, error) {
 			out.Reset()
-			err := c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "data", Stop: true}, &out)
+			res, err := c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "data", Live: true}, &out)
+			if err == nil && (res == nil || res.Downtime != Duration(2*time.Second) || len(res.Stopped) != 1) {
+				return nil, fmt.Errorf("result %+v", res)
+			}
 			return out.String(), err
-		}, VolumeBackupRequest{Release: "shop", Volume: "data", Stop: true}},
+		}, VolumeBackupRequest{Release: "shop", Volume: "data", Live: true}},
 		{"RestoreVolume", func() (any, error) {
-			return nil, c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz", Confirmed: true}, strings.NewReader("backup"))
-		}, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Name: "data.tar.gz", Confirmed: true}},
+			var events []Event
+			req := VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Merge: true, NoRestorePoint: true, Name: "data.tar.gz", Confirmed: true}
+			res, err := c.RestoreVolume(ctx, req, strings.NewReader("backup"), func(e Event) { events = append(events, e) })
+			if err == nil && (len(events) != 1 || res == nil || res.RestorePoint == "") {
+				return nil, fmt.Errorf("events %v result %+v", events, res)
+			}
+			return nil, err
+		}, VolumeRestoreRequest{Release: "shop", Volume: "data", Force: true, Merge: true, NoRestorePoint: true, Name: "data.tar.gz", Confirmed: true}},
+		{"UndoRestoreVolume", func() (any, error) {
+			var events []Event
+			res, err := c.UndoRestoreVolume(ctx, VolumeUndoRestoreRequest{Release: "shop", Volume: "data", Confirmed: true}, func(e Event) { events = append(events, e) })
+			if err == nil && (len(events) != 1 || res == nil || len(res.Stopped) != 1) {
+				return nil, fmt.Errorf("events %v result %+v", events, res)
+			}
+			return nil, err
+		}, VolumeUndoRestoreRequest{Release: "shop", Volume: "data", Confirmed: true}},
 		{"Reconcile", func() (any, error) { return c.Reconcile(ctx, ReconcileRequest{Name: "shop", Force: true}) }, ReconcileRequest{Name: "shop", Force: true}},
 		{"Pause", func() (any, error) { return nil, c.Pause(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
 		{"Resume", func() (any, error) { return nil, c.Resume(ctx, ReleaseRequest{Name: "shop"}) }, ReleaseRequest{Name: "shop"}},
@@ -309,10 +332,16 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 		"logs of nothing": func() error { return c.Logs(ctx, LogsRequest{}, io.Discard) },
 		"bad workload":    func() error { return c.Logs(ctx, LogsRequest{Release: "shop", Workloads: []string{"a/b"}}, io.Discard) },
 		"bad volume": func() error {
-			return c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "../etc"}, io.Discard)
+			_, err := c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "../etc"}, io.Discard)
+			return err
 		},
 		"restore bad name": func() error {
-			return c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "x/y", Volume: "data"}, strings.NewReader("backup"))
+			_, err := c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "x/y", Volume: "data"}, strings.NewReader("backup"), nil)
+			return err
+		},
+		"undo bad volume": func() error {
+			_, err := c.UndoRestoreVolume(ctx, VolumeUndoRestoreRequest{Release: "shop", Volume: "../etc", Confirmed: true}, nil)
+			return err
 		},
 		"exec nothing": func() error {
 			_, err := c.Exec(ctx, ExecRequest{Release: "shop", Workload: "web"})
@@ -332,7 +361,12 @@ func TestInvalidRequestsNeverReachTheBackend(t *testing.T) {
 			return err
 		},
 		"unconfirmed restore": func() error {
-			return c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data"}, strings.NewReader("backup"))
+			_, err := c.RestoreVolume(ctx, VolumeRestoreRequest{Release: "shop", Volume: "data"}, strings.NewReader("backup"), nil)
+			return err
+		},
+		"unconfirmed undo": func() error {
+			_, err := c.UndoRestoreVolume(ctx, VolumeUndoRestoreRequest{Release: "shop", Volume: "data"}, nil)
+			return err
 		},
 		"unconfirmed exposure": func() error {
 			return c.SetGatewayListen(ctx, GatewayListenRequest{Addresses: []string{"0.0.0.0"}})
@@ -358,7 +392,7 @@ var required = map[string]bool{"name": true, "release": true, "workload": true, 
 
 func TestOptionalRequestFieldsAreOmitted(t *testing.T) {
 	for _, v := range []any{InstallRequest{}, UpgradeRequest{}, RollbackRequest{}, UninstallRequest{}, ReleaseRequest{}, RevisionRequest{},
-		ValuesRequest{}, DiffRequest{}, ReconcileRequest{}, EventsRequest{}, LogsRequest{}, VolumeBackupRequest{}, VolumeRestoreRequest{},
+		ValuesRequest{}, DiffRequest{}, ReconcileRequest{}, EventsRequest{}, LogsRequest{}, VolumeBackupRequest{}, VolumeRestoreRequest{}, VolumeUndoRestoreRequest{},
 		GatewayAccessLogRequest{}, GatewayListenRequest{}, GatewayListenerRequest{}, Listener{}, CommonOptions{}, ValuesInput{}, Set{}, execRequest{}} {
 		typ := reflect.TypeOf(v)
 		for f := range typ.Fields() {

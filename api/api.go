@@ -47,8 +47,9 @@ type Reader interface {
 type Streamer interface {
 	Logs(ctx context.Context, req LogsRequest, w io.Writer) error
 	Exec(ctx context.Context, req ExecRequest) (int, error)
-	BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) error
-	RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) error
+	BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (*VolumeResult, error)
+	RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader, progress func(Event)) (*VolumeResult, error)
+	UndoRestoreVolume(ctx context.Context, req VolumeUndoRestoreRequest, progress func(Event)) (*VolumeResult, error)
 }
 
 // Reconciler controls the repairs of a release.
@@ -97,11 +98,12 @@ type (
 	}
 	// deployLine is one line of a deploy response: progress events, then the outcome.
 	deployLine struct {
-		Event  *Event  `json:"event,omitempty"`
-		Result *Result `json:"result,omitempty"`
-		Error  string  `json:"error,omitempty"`
-		Code   string  `json:"code,omitempty"`
-		Done   bool    `json:"done,omitempty"`
+		Event  *Event        `json:"event,omitempty"`
+		Result *Result       `json:"result,omitempty"`
+		Volume *VolumeResult `json:"volume,omitempty"`
+		Error  string        `json:"error,omitempty"`
+		Code   string        `json:"code,omitempty"`
+		Done   bool          `json:"done,omitempty"`
 	}
 	execRequest struct {
 		Release  string   `json:"release"`
@@ -127,6 +129,8 @@ type (
 const (
 	trailerError = "X-Karga-Error"
 	trailerCode  = "X-Karga-Error-Code"
+	// trailerResult carries the JSON result of a streamed operation (a volume backup's).
+	trailerResult = "X-Karga-Result"
 )
 
 // The API version is Major.Minor. A karga CLI and a karga-server work together when their Major is
@@ -134,12 +138,12 @@ const (
 // request fields whose zero value keeps the old behaviour. A newer client still works with an older
 // server of the same Major; what the server lacks fails with a message to upgrade it.
 const (
-	Major = 3
+	Major = 4
 	Minor = 0
 )
 
 // Version is the API version this package speaks: Major.Minor.
-const Version = "3.0"
+const Version = "4.0"
 
 const apiHeader = "Karga-Api"
 

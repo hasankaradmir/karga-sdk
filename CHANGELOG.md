@@ -6,6 +6,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `VolumeUndoRestoreRequest` and `Streamer.UndoRestoreVolume` (`POST /v1/volume/undo-restore`): put back
+  the files a volume had before its last restore.
+- `VolumeResult` (stopped workloads, downtime, restore point) from `BackupVolume`, `RestoreVolume` and
+  `UndoRestoreVolume`; a backup carries it in the `X-Karga-Result` trailer. `Operation.Downtime`.
+- `ErrNotReady` (`not_ready`): the operation did its work, but the workloads it started again did not
+  get ready.
 - An exposure's `pathType`: `prefix` (the default) takes the path and below it by segment (`/api`
   is not `/apix`; was a plain string prefix), `exact` only the path. `to` (with a prefix) replaces
   the prefix in what the service receives (`to: /` serves `/api/orders` of `/api` as `/orders`).
@@ -41,6 +47,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   tests of API clients.
 
 ### Changed
+- API 4.0. Volume backups stop the workloads writing to the volume by default (`VolumeBackupRequest.Live`
+  replaces `Stop`); a restore replaces the volume's files (`Merge` writes over them, as before) and keeps
+  a restore point unless `NoRestorePoint`. `RestoreVolume` and `UndoRestoreVolume` stream progress
+  events like a deploy. A 3.x client and a 4.x server refuse each other.
 
 - `ResourceStatus.Healthy` (and so `StatusReport.Healthy`) is false for a Service routed to no
   backend (`not routed`): its traffic goes nowhere.

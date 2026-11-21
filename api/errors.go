@@ -12,6 +12,9 @@ var (
 	ErrConflict     = errors.New("conflict")
 	ErrInvalid      = errors.New("invalid request")
 	ErrIncompatible = errors.New("incompatible API version")
+	// ErrNotReady is returned when an operation did its work but the workloads it started again did
+	// not get ready: a volume backup's file is complete, a restore's files are in place.
+	ErrNotReady = errors.New("not ready")
 )
 
 // Errors of the client itself.
@@ -35,6 +38,7 @@ var kinds = []struct {
 	{ErrConflict, "conflict", http.StatusConflict},
 	{ErrInvalid, "invalid", http.StatusBadRequest},
 	{ErrIncompatible, "incompatible", http.StatusBadRequest},
+	{ErrNotReady, "not_ready", http.StatusServiceUnavailable},
 }
 
 // kindOf returns the error code and HTTP status of err ("internal", 500 if it has no known kind).
