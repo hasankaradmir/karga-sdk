@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -95,7 +96,10 @@ func fromFiles(files map[string][]byte) (*Package, error) {
 	for name, data := range files {
 		switch {
 		case strings.HasPrefix(name, templatesDir):
-			p.Templates[strings.TrimPrefix(name, templatesDir)] = data
+			// Hidden files (macOS ._* and .DS_Store, editor files) are not templates.
+			if !strings.HasPrefix(path.Base(name), ".") {
+				p.Templates[strings.TrimPrefix(name, templatesDir)] = data
+			}
 		case strings.HasPrefix(name, filesDir):
 			p.Files[strings.TrimPrefix(name, filesDir)] = data
 		case strings.HasPrefix(name, packagesDir):

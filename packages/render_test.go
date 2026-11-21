@@ -126,6 +126,17 @@ func TestLint(t *testing.T) {
 	if issues, _ := Lint("testdata/demo", Options{}); issues != nil {
 		t.Fatalf("demo should lint clean: %v", issues)
 	}
+	// A macOS AppleDouble file next to the templates is not one.
+	hidden := t.TempDir()
+	if err := os.CopyFS(hidden, os.DirFS("testdata/demo")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hidden, "templates", "._web.yaml"), []byte("\x00\x05\x16\x07Mac OS X\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if issues, _ := Lint(hidden, Options{}); issues != nil {
+		t.Fatalf("hidden template files should be ignored: %v", issues)
+	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Package.yaml"), []byte("apiVersion: v1\nname: Bad\nversion: x\nruntime: {supported: []}\n"), 0o600); err != nil {
 		t.Fatal(err)
