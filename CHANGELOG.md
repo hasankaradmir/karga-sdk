@@ -6,6 +6,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- API 4.1: `ReconcileRequest.EmptyVolumes` creates the release's Volumes that are missing in the
+  runtime, empty. karga-server no longer does that on its own repairs.
 - `VolumeUndoRestoreRequest` and `Streamer.UndoRestoreVolume` (`POST /v1/volume/undo-restore`): put back
   the files a volume had before its last restore.
 - `VolumeResult` (stopped workloads, downtime, restore point) from `BackupVolume`, `RestoreVolume` and

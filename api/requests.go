@@ -64,9 +64,12 @@ func (r DiffRequest) Validate() error {
 }
 
 // ReconcileRequest asks for a repair of a release now. Force also repairs what karga gave up on.
+// EmptyVolumes creates the release's Volumes that are missing in the runtime, empty: a repair does
+// not on its own, as their files are gone (API 4.1).
 type ReconcileRequest struct {
-	Name  string `json:"name"`
-	Force bool   `json:"force,omitempty"`
+	Name         string `json:"name"`
+	Force        bool   `json:"force,omitempty"`
+	EmptyVolumes bool   `json:"emptyVolumes,omitempty"`
 }
 
 // Validate checks the release name.

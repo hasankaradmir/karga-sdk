@@ -139,11 +139,11 @@ const (
 // server of the same Major; what the server lacks fails with a message to upgrade it.
 const (
 	Major = 4
-	Minor = 0
+	Minor = 1
 )
 
 // Version is the API version this package speaks: Major.Minor.
-const Version = "4.0"
+const Version = "4.1"
 
 const apiHeader = "Karga-Api"
 
