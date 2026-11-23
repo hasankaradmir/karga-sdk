@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,38 @@ func TestVolumeNotReadyKeepsTheResult(t *testing.T) {
 	if !errors.Is(err, ErrNotReady) || r == nil || r.RestorePoint == "" {
 		t.Fatalf("restore: %v %+v", err, r)
 	}
+}
+
+// A backup the caller stops while it downloads is an error, not a complete file (the CLI then
+// removes the file).
+func TestBackupStoppedByTheCallerFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := NewClient(serve(t, cutShort{&recorder{}}))
+	res, err := c.BackupVolume(ctx, VolumeBackupRequest{Release: "shop", Volume: "data"}, stopOnWrite(cancel))
+	if !errors.Is(err, ErrDetached) || !errors.Is(err, context.Canceled) || res != nil {
+		t.Fatalf("got %v %+v", err, res)
+	}
+}
+
+// cutShort sends part of a backup, then waits for the client to go away.
+type cutShort struct{ *recorder }
+
+func (cutShort) BackupVolume(ctx context.Context, _ VolumeBackupRequest, w io.Writer) (*VolumeResult, error) {
+	_, _ = w.Write([]byte("part"))
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+	<-ctx.Done()
+	return &VolumeResult{}, nil
+}
+
+// stopOnWrite stops the caller when the first bytes arrive.
+type stopOnWrite context.CancelFunc
+
+func (s stopOnWrite) Write(p []byte) (int, error) {
+	s()
+	return len(p), nil
 }
 
 func TestVolumeRisks(t *testing.T) {
