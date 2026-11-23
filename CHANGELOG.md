@@ -85,6 +85,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- `BackupVolume` returned no error when the caller stopped it mid-download (Ctrl-C, a timeout): the
+  CLI kept the part it had as a complete backup and exited 0. It returns `ErrDetached` now.
 - Hidden files in `templates/` (macOS `._*` and `.DS_Store`, editor files) were rendered as
   templates and failed the package (`yaml: control characters are not allowed`); they are ignored.
 

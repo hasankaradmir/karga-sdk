@@ -304,9 +304,12 @@ func (c *Client) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 }
 
 // BackupVolume implements Backend. A copy that is complete comes with its result, also when the
-// workloads did not get ready again (ErrNotReady).
+// workloads did not get ready again (ErrNotReady); one the caller stopped returns ErrDetached.
 func (c *Client) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (*VolumeResult, error) {
 	trailer, err := c.download(ctx, "/v1/volume/backup", req, w)
+	if err == nil && trailer == nil { // the caller stopped: the file is cut short
+		return nil, fmt.Errorf("%w: %w", ErrDetached, ctx.Err())
+	}
 	var res *VolumeResult
 	if raw := trailer.Get(trailerResult); raw != "" {
 		res = new(VolumeResult)
