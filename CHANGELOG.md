@@ -6,6 +6,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `StatusUnreadable` (`unreadable`): a release karga-server lists though it cannot read its state
+  file.
 - API 4.1: `ReconcileRequest.EmptyVolumes` creates the release's Volumes that are missing in the
   runtime, empty. karga-server no longer does that on its own repairs.
 - `VolumeUndoRestoreRequest` and `Streamer.UndoRestoreVolume` (`POST /v1/volume/undo-restore`): put back
