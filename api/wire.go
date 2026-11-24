@@ -14,6 +14,8 @@ const (
 	StatusFailed       = "failed"
 	StatusUninstalling = "uninstalling"
 	StatusUninstalled  = "uninstalled"
+	// StatusUnreadable is a release whose state file karga-server cannot read; its status says why.
+	StatusUnreadable = "unreadable"
 )
 
 // Release is an installed instance of a package.
