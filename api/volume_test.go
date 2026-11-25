@@ -108,3 +108,21 @@ func (aborting) Pause(context.Context, ReleaseRequest) error {
 	time.Sleep(time.Second)
 	return nil
 }
+
+// Values keep their numbers' kinds: a whole number is an int64 (YAML prints 1000000, not 1e+06).
+func TestValuesKeepIntegers(t *testing.T) {
+	c := NewClient(serve(t, numbersBackend{&recorder{}}))
+	v, err := c.Values(context.Background(), ValuesRequest{Name: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v["replicas"] != int64(1000000) || v["ratio"] != 0.5 || v["ids"].([]any)[0] != int64(9007199254740993) {
+		t.Fatalf("values: %#v", v)
+	}
+}
+
+type numbersBackend struct{ *recorder }
+
+func (numbersBackend) Values(context.Context, ValuesRequest) (map[string]any, error) {
+	return map[string]any{"replicas": 1000000, "ratio": 0.5, "ids": []any{int64(9007199254740993)}}, nil
+}
