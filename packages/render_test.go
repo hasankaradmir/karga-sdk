@@ -288,3 +288,23 @@ func TestSetsApplyInOrder(t *testing.T) {
 		t.Fatalf("hosts: %v %v", got["hosts"], err)
 	}
 }
+
+// A writeOnly value an error quotes is shown redacted: a schema's pattern message, a --set that
+// does not parse, a template that fails on it (SC-12).
+func TestRenderErrorsRedactWriteOnly(t *testing.T) {
+	p := &Package{Metadata: Metadata{APIVersion: "karga.io/v1alpha1", Name: "p", Version: "1.0.0", Runtime: Runtime{Supported: []string{"docker"}}},
+		Values:    map[string]any{"password": "", "port": 8080},
+		Schema:    []byte(`{"type":"object","properties":{"password":{"type":"string","writeOnly":true,"pattern":"^[a-z]+$"},"port":{"type":"integer"}}}`),
+		Templates: map[string][]byte{"n.yaml": []byte("{{ if eq .Values.port 1 }}{{ fail (print \"bad \" .Values.password) }}{{ end }}apiVersion: karga.io/v1alpha1\nkind: Network\nmetadata: {name: n}\n")}}
+	for name, sets := range map[string][]Set{
+		"pattern":  {{Expr: "password=Hunter2!"}},
+		"template": {{Expr: "password=hunter"}, {Expr: "port=1"}},
+		"set":      {{Expr: "password=Hunter2!"}, {Expr: "port[x=1"}},
+	} {
+		_, err := Render(p, Options{ReleaseName: "r", Values: ValueSources{Sets: sets}})
+		secret := strings.TrimPrefix(sets[0].Expr, "password=")
+		if err == nil || strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

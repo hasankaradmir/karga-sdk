@@ -40,7 +40,10 @@ Rendering is bounded so an untrusted package cannot exhaust the server that rend
 and `tpl` nest at most 100 deep, a render takes at most 10 seconds and writes at most 16 MiB, its
 `range` loops run at most 1,000,000 iterations together (the time is checked as they run, so a loop
 that writes nothing stops too), and `until`, `untilStep`, `seq`, `repeat`, `indent` and `nindent`
-refuse huge results, arguments near the limits of an integer included. A package
+refuse huge results, arguments near the limits of an integer included. No function may return more
+than 16 MiB of text or 1,000,000 elements (a value doubled at every step stops there), and `printf`
+refuses a width or precision past 16 MiB or taken from an argument (`*`). Render errors show
+writeOnly values as `<redacted>`. A package
 directory is read without `.git` and without the paths its `.kargaignore` lists; it may hold at
 most 10000 files and 32 MiB.
 

@@ -3,6 +3,8 @@ package renderer
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -204,4 +206,64 @@ func nindent(spaces int, s string) (string, error) {
 var sizeFuncs = template.FuncMap{
 	"until": until, "untilStep": untilStep, "seq": seq,
 	"repeat": repeat, "indent": indent, "nindent": nindent,
+}
+
+// maxElements caps the lists and maps a function may return: one that doubles a list each
+// iteration ({{ $l = concat $l $l }}) would exhaust memory long before the iteration limit.
+const maxElements = 1_000_000
+
+// bounded wraps fn so that a string longer than maxOutput, or a list or map of more than
+// maxElements, fails the render: a value a template doubles at every step ({{ $s = print $s $s }})
+// grows past any memory in 40 iterations, without writing a byte. text/template turns the panic
+// into the render's error.
+func bounded(name string, fn any) any {
+	v := reflect.ValueOf(fn)
+	if v.Kind() != reflect.Func {
+		return fn
+	}
+	t := v.Type()
+	return reflect.MakeFunc(t, func(args []reflect.Value) []reflect.Value {
+		var out []reflect.Value
+		if t.IsVariadic() {
+			out = v.CallSlice(args)
+		} else {
+			out = v.Call(args)
+		}
+		for _, o := range out {
+			if o.Kind() == reflect.Interface && !o.IsNil() {
+				o = o.Elem()
+			}
+			switch {
+			case o.Kind() == reflect.String && o.Len() > maxOutput:
+				panic(fmt.Errorf("%s: result too large (limit %d bytes)", name, maxOutput))
+			case (o.Kind() == reflect.Slice || o.Kind() == reflect.Map) && o.Len() > maxElements:
+				panic(fmt.Errorf("%s: result too large (limit %d elements)", name, maxElements))
+			}
+		}
+		return out
+	}).Interface()
+}
+
+// formatVerb matches a printf verb's flags, width and precision.
+var formatVerb = regexp.MustCompile(`%[-+# 0]*(\*|[0-9]+)?(?:\.(\*|[0-9]+))?`)
+
+// checkFormat refuses a printf format whose width or precision would build a string past
+// maxOutput before bounded can look at it (%999999999d), or comes from an argument (*).
+func checkFormat(format string) error {
+	for _, m := range formatVerb.FindAllStringSubmatch(format, -1) {
+		for _, n := range m[1:] {
+			if n == "*" {
+				return errors.New("printf: a width or precision from an argument (*) is not supported")
+			}
+			if n != "" && (len(n) > 8 || mustAtoi(n) > maxOutput) {
+				return fmt.Errorf("printf: width or precision %s is too large (limit %d)", n, maxOutput)
+			}
+		}
+	}
+	return nil
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
