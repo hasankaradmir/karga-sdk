@@ -89,6 +89,7 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- `Client.Values` decoded every number as a float64; whole numbers are int64 now.
 - A connection karga-server broke off during a stream (logs, a backup's download, exec, an upload)
   returned the transport's error (`unexpected EOF`); it is `ErrDisconnected` now. A request the
   caller canceled after it went out returns `ErrDetached`.

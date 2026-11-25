@@ -224,9 +224,42 @@ func (c *Client) History(ctx context.Context, req ReleaseRequest) ([]Revision, e
 	return call[[]Revision](ctx, c, "/v1/history", req)
 }
 
-// Values implements Backend.
+// Values implements Backend. Numbers keep their kind: an integer comes back an int64, not a
+// float64 that YAML would print as 1e+06.
 func (c *Client) Values(ctx context.Context, req ValuesRequest) (map[string]any, error) {
-	return call[map[string]any](ctx, c, "/v1/values", req)
+	raw, err := call[json.RawMessage](ctx, c, "/v1/values", req)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v map[string]any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	numbers(v) // in place: a map or list keeps its identity
+	return v, nil
+}
+
+// numbers turns the json.Numbers of v into int64 where they are whole, float64 otherwise.
+func numbers(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			t[k] = numbers(x)
+		}
+	case []any:
+		for i, x := range t {
+			t[i] = numbers(x)
+		}
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return n
+		}
+		f, _ := t.Float64()
+		return f
+	}
+	return v
 }
 
 // Notes implements Backend.
