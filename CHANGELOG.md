@@ -89,6 +89,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- Requests are bounded and checked: at most `MaxSets` sets, `MaxValueFiles` files of `MaxValueFile`
+  bytes, `MaxEvents` events, `MaxTail` log lines; a listener's protocol is tcp, http or https; an
+  exec argument holds no NUL; a gateway revision's source and a restore's name hold no control
+  character (`GatewayApplyRequest.Validate`, `ValuesInput.Validate`).
 - `Client.Values` decoded every number as a float64; whole numbers are int64 now.
 - A connection karga-server broke off during a stream (logs, a backup's download, exec, an upload)
   returned the transport's error (`unexpected EOF`); it is `ErrDisconnected` now. A request the
