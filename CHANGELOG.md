@@ -89,6 +89,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- A connection karga-server broke off during a stream (logs, a backup's download, exec, an upload)
+  returned the transport's error (`unexpected EOF`); it is `ErrDisconnected` now. A request the
+  caller canceled after it went out returns `ErrDetached`.
 - `BackupVolume` returned no error when the caller stopped it mid-download (Ctrl-C, a timeout): the
   CLI kept the part it had as a complete backup and exited 0. It returns `ErrDetached` now.
 - Hidden files in `templates/` (macOS `._*` and `.DS_Store`, editor files) were rendered as
