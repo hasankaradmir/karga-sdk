@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -75,8 +76,12 @@ type Manifest struct {
 
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
 
-// Render merges values, validates them, renders templates and decodes the resources.
-func Render(p *Package, opts Options) (*Manifest, error) {
+// Render merges values, validates them, renders templates and decodes the resources. Its errors
+// show writeOnly values as <redacted>: a schema's pattern message, a --set that does not parse or a
+// template's failure may quote them.
+func Render(p *Package, opts Options) (m *Manifest, err error) {
+	var secrets []string
+	defer func() { err = redactErr(err, secrets) }()
 	if err := resource.ValidateReleaseName(opts.ReleaseName); err != nil {
 		return nil, err
 	}
@@ -86,11 +91,17 @@ func Render(p *Package, opts Options) (*Manifest, error) {
 	if err := p.Metadata.Validate(); err != nil {
 		return nil, prefixed(metadataFile, err)
 	}
+	secretPaths, err := values.SecretPaths(p.Schema)
+	if err != nil {
+		return nil, err
+	}
+	secrets = setSecrets(opts.Values.Sets, secretPaths)
 	overrides, err := Overrides(opts.Values, p.Values)
 	if err != nil {
 		return nil, err
 	}
 	vals := values.Merge(p.Values, overrides)
+	secrets = append(secrets, secretValues(vals, secretPaths)...)
 	if err := values.Validate(p.Schema, vals, opts.Strict); err != nil {
 		return nil, err
 	}
@@ -110,11 +121,7 @@ func Render(p *Package, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
-	secretPaths, err := values.SecretPaths(p.Schema)
-	if err != nil {
-		return nil, err
-	}
-	m := &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals, SecretPaths: secretPaths}
+	m = &Manifest{Package: p.Metadata, Overrides: overrides, Values: vals, SecretPaths: secretPaths}
 	var errs []error
 	for _, o := range outs {
 		if o.Path == notesTemplate {
@@ -157,6 +164,56 @@ func Render(p *Package, opts Options) (*Manifest, error) {
 	m.Notes = m.Redact(m.Notes)
 	return m, nil
 }
+
+// secretValues are the writeOnly values of vals, as text.
+func secretValues(vals map[string]any, paths [][]string) []string {
+	var out []string
+	for _, p := range paths {
+		for _, v := range values.At(vals, p) {
+			if s := fmt.Sprint(v); s != "" && v != nil {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// setSecrets are the values the --set expressions give writeOnly paths (an expression that does
+// not parse has none in vals yet).
+func setSecrets(sets []Set, paths [][]string) []string {
+	var out []string
+	for _, s := range sets {
+		key, val, ok := strings.Cut(s.Expr, "=")
+		if ok && val != "" && slices.ContainsFunc(paths, func(p []string) bool { return strings.Join(p, ".") == key }) {
+			out = append(out, val)
+		}
+	}
+	return out
+}
+
+// redactErr shows each of secrets in err as Redacted; err still unwraps to what it wraps.
+func redactErr(err error, secrets []string) error {
+	if err == nil || len(secrets) == 0 {
+		return err
+	}
+	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) }) // a longer one first: it may hold a shorter
+	msg := err.Error()
+	for _, s := range secrets {
+		msg = strings.ReplaceAll(msg, s, Redacted)
+	}
+	if msg == err.Error() {
+		return err
+	}
+	return redactedError{msg, err}
+}
+
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e redactedError) Error() string { return e.msg }
+func (e redactedError) Unwrap() error { return e.err }
 
 // leadingBlank counts the empty lines a document starts with.
 func leadingBlank(doc string) int {

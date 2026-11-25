@@ -217,6 +217,19 @@ func funcMap(root *template.Template, b *budget) template.FuncMap {
 		}
 		return m, nil
 	}
+	// text/template's own print, printf and println, overridden to be bounded too.
+	fm["print"], fm["println"] = fmt.Sprint, fmt.Sprintln
+	fm["printf"] = func(format string, args ...any) (string, error) {
+		if err := checkFormat(format); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf(format, args...), nil
+	}
+	for name, fn := range fm {
+		if name != tickFunc {
+			fm[name] = bounded(name, fn)
+		}
+	}
 	return fm
 }
 

@@ -89,6 +89,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ### Fixed
 
+- A template could exhaust the memory of whatever rendered it without writing a byte: a value it
+  doubled at every step (`{{ $s = print $s $s }}`, `concat $l $l`) passed every render limit and
+  karga-server died of it, with every running operation. A function's result is bounded (16 MiB of
+  text, 1,000,000 elements), and `printf` refuses a huge width or one taken from an argument (`*`).
+- A render error could quote a writeOnly value (a schema's `pattern` message, a `--set` that does not
+  parse, a template's `fail`): it went to the terminal, CI logs and the journal. Render errors show
+  them as `<redacted>`.
 - Requests are bounded and checked: at most `MaxSets` sets, `MaxValueFiles` files of `MaxValueFile`
   bytes, `MaxEvents` events, `MaxTail` log lines; a listener's protocol is tcp, http or https; an
   exec argument holds no NUL; a gateway revision's source and a restore's name hold no control

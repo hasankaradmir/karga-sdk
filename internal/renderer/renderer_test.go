@@ -152,6 +152,13 @@ func TestRenderLimits(t *testing.T) {
 		"repeat overflow":  {`{{ repeat 4611686018427387904 "xxxx" }}`, "too large"},
 		"indent overflow":  {`{{ indent 4611686018427387904 "a\nb\nc\nd" }}`, "too large"},
 		"nindent overflow": {`{{ nindent 4611686018427387904 "a\nb\nc\nd" }}`, "too large"},
+		// Values a template doubles at every step grow past any memory without writing (SC-09).
+		"doubling print":   {`{{ $s := "xxxxxxxx" }}{{ range until 64 }}{{ $s = print $s $s }}{{ end }}`, "too large"},
+		"doubling cat":     {`{{ $s := "xxxxxxxx" }}{{ range until 64 }}{{ $s = cat $s $s }}{{ end }}`, "too large"},
+		"doubling replace": {`{{ $s := "xxxxxxxx" }}{{ range until 64 }}{{ $s = replace "x" "xx" $s }}{{ end }}`, "too large"},
+		"doubling list":    {`{{ $l := list 1 }}{{ range until 64 }}{{ $l = concat $l $l }}{{ end }}`, "too large"},
+		"printf width":     {`{{ printf "%999999999d" 1 }}`, "too large"},
+		"printf star":      {`{{ printf "%*d" 999999999 1 }}`, "argument"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -166,6 +173,9 @@ func TestRenderLimits(t *testing.T) {
 		})
 	}
 	// Normal use stays allowed.
+	if got := renderOne(t, `{{ printf "%05.1f|%-3s|%%" 3.14159 "a" }}{{ print 1 2 }}`); got != "003.1|a  |%1 2" {
+		t.Fatalf("printf: %q", got)
+	}
 	if got := renderOne(t, `{{ range until 3 }}{{ . }}{{ end }}{{ repeat 2 "ab" }}{{ indent 2 "x" }}`); got != "012abab  x" {
 		t.Fatalf("got %q", got)
 	}
