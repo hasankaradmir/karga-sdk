@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 )
@@ -92,6 +93,9 @@ func (r EventsRequest) Validate() error {
 	if r.AfterID < 0 {
 		err = errors.Join(err, fmt.Errorf("afterId: %d must not be negative", r.AfterID))
 	}
+	if r.Limit > MaxEvents {
+		err = errors.Join(err, fmt.Errorf("limit: %d, more than %d", r.Limit, MaxEvents))
+	}
 	return errors.Join(err, nonNegative("limit", r.Limit))
 }
 
@@ -106,6 +110,12 @@ func (r ExecRequest) Validate() error {
 	err := errors.Join(resource.ValidateReleaseName(r.Release), dnsLabel("workload", r.Workload))
 	if len(r.Cmd) == 0 {
 		err = errors.Join(err, errors.New("a command is required"))
+	}
+	for _, a := range r.Cmd {
+		if strings.ContainsRune(a, 0) {
+			err = errors.Join(err, errors.New("command: an argument holds a NUL byte"))
+			break
+		}
 	}
 	return err
 }
@@ -172,6 +182,11 @@ type GatewayApplyRequest struct {
 	Confirmed bool   `json:"confirmed,omitempty"`
 }
 
+// Validate checks the document's size and the source, which the history shows.
+func (r GatewayApplyRequest) Validate() error {
+	return errors.Join(r.GatewayDocument.Validate(), oneLine("source", r.Source, MaxSource))
+}
+
 // GatewayExportRequest names a revision of the gateway settings (0: the current one).
 type GatewayExportRequest struct {
 	Revision int `json:"revision,omitempty"`
@@ -200,11 +215,13 @@ func (r GatewayListenerRequest) Risk() string {
 }
 
 // Validate checks the release name.
-func (r InstallRequest) Validate() error { return resource.ValidateReleaseName(r.Name) }
+func (r InstallRequest) Validate() error {
+	return errors.Join(resource.ValidateReleaseName(r.Name), r.Values.Validate())
+}
 
 // Validate checks the release name and the strategy, and the confirmation.
 func (r UpgradeRequest) Validate() error {
-	return errors.Join(resource.ValidateReleaseName(r.Name), ValidateStrategy(r.Strategy), confirmed(r.Risk(), r.Confirmed))
+	return errors.Join(resource.ValidateReleaseName(r.Name), ValidateStrategy(r.Strategy), r.Values.Validate(), confirmed(r.Risk(), r.Confirmed))
 }
 
 // Risk says what data the upgrade may delete.
@@ -273,6 +290,9 @@ func (r LogsRequest) Validate() error {
 	for _, w := range r.Workloads {
 		err = errors.Join(err, dnsLabel("workload", w))
 	}
+	if r.Tail > MaxTail {
+		err = errors.Join(err, fmt.Errorf("tail: %d lines, more than %d", r.Tail, MaxTail))
+	}
 	return err
 }
 
@@ -284,8 +304,8 @@ func (r VolumeBackupRequest) Validate() error {
 // Validate checks the names.
 func (r VolumeRestoreRequest) Validate() error {
 	err := errors.Join(resource.ValidateReleaseName(r.Release), dnsLabel("volume", r.Volume))
-	if len(r.Name) > 255 || strings.ContainsAny(r.Name, "\x00\n\r") {
-		err = errors.Join(err, errors.New("name: the backup's name must be one line of at most 255 bytes"))
+	if oneLine("name", r.Name, 255) != nil {
+		err = errors.Join(err, errors.New("name: the backup's name must be one line of at most 255 bytes, without control characters"))
 	}
 	return errors.Join(err, confirmed(r.Risk(), r.Confirmed))
 }
@@ -319,7 +339,49 @@ func (l Listener) Validate() error {
 	if l.Port < 1 || l.Port > 65535 {
 		err = errors.Join(err, fmt.Errorf("port: %d must be between 1 and 65535", l.Port))
 	}
+	if l.Protocol != "tcp" && l.Protocol != "http" && l.Protocol != "https" {
+		err = errors.Join(err, fmt.Errorf("protocol: %q must be tcp, http or https", l.Protocol))
+	}
 	return err
+}
+
+// Bounds of what a request may ask for: a client cannot make the server hold or send more.
+const (
+	MaxEvents     = 10000   // operations per events request
+	MaxTail       = 100000  // log lines per container
+	MaxSets       = 1000    // --set expressions
+	MaxValueFiles = 100     // -f files
+	MaxSource     = 200     // a gateway revision's source
+	MaxValueFile  = 4 << 20 // bytes of one -f file
+)
+
+// Validate bounds the values: how many sets and files, and each file's size.
+func (v ValuesInput) Validate() error {
+	var err error
+	if len(v.Sets) > MaxSets {
+		err = fmt.Errorf("values: %d --set, more than %d", len(v.Sets), MaxSets)
+	}
+	if len(v.Files) > MaxValueFiles {
+		err = errors.Join(err, fmt.Errorf("values: %d files, more than %d", len(v.Files), MaxValueFiles))
+	}
+	for i, f := range v.Files {
+		if len(f) > MaxValueFile {
+			err = errors.Join(err, fmt.Errorf("values: file %d is %d bytes, more than %d", i+1, len(f), MaxValueFile))
+		}
+	}
+	return err
+}
+
+// oneLine refuses s if it is longer than max bytes or holds a control character (a line break,
+// an escape sequence that would rewrite a terminal).
+func oneLine(field, s string, max int) error {
+	if len(s) > max {
+		return fmt.Errorf("%s: %d bytes, more than %d", field, len(s), max)
+	}
+	if strings.IndexFunc(s, unicode.IsControl) >= 0 {
+		return fmt.Errorf("%s: %q holds a control character", field, s)
+	}
+	return nil
 }
 
 func nonNegative(field string, n int) error {
