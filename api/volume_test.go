@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A volume operation that did its work but whose workloads did not get ready again reports
@@ -74,4 +76,35 @@ func TestVolumeRisks(t *testing.T) {
 			t.Errorf("%+v: %q", tc.r, risk)
 		}
 	}
+}
+
+// A stream karga-server breaks off (it stopped) is ErrDisconnected, not a raw EOF; a request the
+// caller stops (Ctrl-C) once sent is ErrDetached: it goes on in karga-server.
+func TestTransportErrors(t *testing.T) {
+	c := NewClient(serve(t, &aborting{&recorder{}}))
+	err := c.Logs(context.Background(), LogsRequest{Release: "shop"}, io.Discard)
+	if !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("logs: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if err := c.Pause(ctx, ReleaseRequest{Name: "shop"}); !errors.Is(err, ErrDetached) {
+		t.Fatalf("pause: %v", err)
+	}
+}
+
+// aborting breaks off a log stream, and holds a pause for a second.
+type aborting struct{ *recorder }
+
+func (aborting) Logs(_ context.Context, _ LogsRequest, w io.Writer) error {
+	_, _ = w.Write([]byte("line\n"))
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+	panic(http.ErrAbortHandler)
+}
+
+func (aborting) Pause(context.Context, ReleaseRequest) error {
+	time.Sleep(time.Second)
+	return nil
 }

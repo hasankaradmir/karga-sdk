@@ -54,7 +54,7 @@ func (c *Client) post(ctx context.Context, path string, body io.Reader, header h
 			}
 			return nil, fmt.Errorf("%w (no server on %s): start it with 'sudo systemctl start karga-server'", ErrNotRunning, c.socket)
 		}
-		return nil, err
+		return nil, transportErr(ctx, err)
 	}
 	if resp.StatusCode >= 400 {
 		defer func() { _ = resp.Body.Close() }()
@@ -168,6 +168,19 @@ func (c *Client) follow(resp *http.Response, progress func(Event)) (deployLine, 
 		return deployLine{}, fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
 	return deployLine{}, ErrDisconnected
+}
+
+// transportErr says what a failed exchange with karga-server means: the caller stopped it (Ctrl-C)
+// after the request went out, so what it asked for goes on (ErrDetached); or the server went away
+// (ErrDisconnected). A deadline the caller set stays as it is.
+func transportErr(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		return fmt.Errorf("%w: %w", ErrDetached, err)
+	case ctx.Err() != nil:
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrDisconnected, err)
 }
 
 // maxLine bounds one line of a deploy response.
@@ -289,7 +302,7 @@ func (c *Client) download(ctx context.Context, path string, in any, w io.Writer)
 		if ctx.Err() != nil {
 			return nil, nil // the caller stopped (e.g. logs -f interrupted)
 		}
-		return nil, err
+		return nil, transportErr(ctx, err)
 	}
 	if msg := resp.Trailer.Get(trailerError); msg != "" {
 		return resp.Trailer, remote(msg, resp.Trailer.Get(trailerCode))
@@ -460,6 +473,9 @@ func (c *Client) Exec(ctx context.Context, req ExecRequest) (int, error) {
 	}
 	for {
 		typ, p, err := readFrame(conn)
+		if err != nil && ctx.Err() == nil { // no exit frame: the server went away
+			err = transportErr(ctx, err)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return -1, ctx.Err()
