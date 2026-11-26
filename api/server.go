@@ -421,11 +421,7 @@ func (s *Server) volumeRestore(w http.ResponseWriter, r *http.Request) {
 // volumeUndoRestore puts back a volume's restore point, to the end even if the client goes away.
 func (s *Server) volumeUndoRestore(w http.ResponseWriter, r *http.Request) {
 	var req VolumeUndoRestoreRequest
-	if !s.decode(w, r, &req) {
-		return
-	}
-	if err := validate(req); err != nil {
-		s.writeError(w, err)
+	if !s.decode(w, r, &req) { // decode validates req
 		return
 	}
 	s.progressed(w, r, func(ctx context.Context, progress func(Event)) (deployLine, error) {
