@@ -112,10 +112,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, pattern := s.mux.Handler(r); pattern == "" {
+		if s.knows(r) {
+			// Every endpoint takes POST: another method is the client's mistake, not an old server.
+			w.Header().Set("Allow", http.MethodPost)
+			code, _ := kindOf(ErrInvalid)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("%s: use POST for %s", ErrInvalid, r.URL.Path), Code: code})
+			return
+		}
 		s.writeError(w, fmt.Errorf("%w: karga-server (API %s) does not know %s; upgrade karga-server", ErrIncompatible, Version, r.URL.Path))
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// knows reports whether r's path is an endpoint when asked with POST.
+func (s *Server) knows(r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		return false
+	}
+	post := r.Clone(r.Context())
+	post.Method = http.MethodPost
+	_, pattern := s.mux.Handler(post)
+	return pattern != ""
 }
 
 func apiMismatch(client string) error {

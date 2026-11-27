@@ -88,6 +88,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 - Built and checked with Go 1.27.4 and govulncheck 1.10.0.
 
 ### Fixed
+- A request to a known endpoint with another method than POST gets 405 (`Allow: POST`) and "use
+  POST for <path>"; it was told to upgrade karga-server, as for an endpoint the server does not
+  have.
 
 - A template could exhaust the memory of whatever rendered it without writing a byte: a value it
   doubled at every step (`{{ $s = print $s $s }}`, `concat $l $l`) passed every render limit and
